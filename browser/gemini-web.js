@@ -55,11 +55,10 @@ const DISMISS = [
   '.tooltip-container button',
   'div[role="tooltip"] button',
   '.gb_Id', // 可能的登入按鈕/提示
-  'div[class*="popover"] button',
-  'div[class*="tooltip"] button',
   // 只在特定容器內的登入按鈕（如彈窗或提示）
   '.p-dialog button:has-text("登入")',
   '.tooltip-container button:has-text("登入")',
+  'div[role="dialog"] button:has-text("登入")',
 ];
 
 const BROWSER_ARGS = [

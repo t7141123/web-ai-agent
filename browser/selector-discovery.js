@@ -51,11 +51,10 @@ const CANDIDATES = {
     'button[aria-label="送信"]',
     '.send-button-container button',
     '.input-buttons-wrapper-bottom button',
+    '.send-button-container',
     'button.send-button',
-    'button[data-test-id="send-button"]',
     'button[jsname*="send"]',
     'mat-icon-button[aria-label*="send" i]',
-    '.send-button-container',
   ],
 
   // AI 回應區塊
@@ -146,7 +145,8 @@ const HEURISTICS = {
       // 輸入框通常在頁面下半部
       const inBottomHalf = rect.top > viewH * 0.5;
       const hasSize = rect.width > 100 && rect.height > 20;
-      return (inBottomHalf ? 2 : 0) + (hasSize ? 1 : 0);
+      const isHeader = rect.top < 100;
+      return (inBottomHalf ? 2 : 0) + (hasSize ? 1 : 0) + (isHeader ? -5 : 0);
     }
   },
   sendButton: {
@@ -156,31 +156,37 @@ const HEURISTICS = {
       const aria = (el.getAttribute('aria-label') || '').toLowerCase();
       const hasSendKeyword = /send|submit|傳送|送出/.test(aria);
       const inBottomRight = rect.right > window.innerWidth * 0.6 && rect.top > window.innerHeight * 0.5;
-      return (hasSendKeyword ? 3 : 0) + (inBottomRight ? 1 : 0);
+      const isHeader = rect.top < 100;
+      return (hasSendKeyword ? 4 : 0) + (inBottomRight ? 2 : 0) + (isHeader ? -10 : 0);
     }
   },
   responseBlock: {
     evaluate: (el) => {
       const tag  = el.tagName.toLowerCase();
-      if (tag === 'button' || tag === 'input' || tag === 'textarea') return 0;
+      if (tag === 'button' || tag === 'input' || tag === 'textarea' || tag === 'nav') return 0;
       
       const role = el.getAttribute('data-role') || el.getAttribute('role') || '';
       const cls  = el.className || '';
       const txt  = el.innerText || '';
+      const rect = el.getBoundingClientRect();
       
+      // 側邊欄通常在左側，寬度較窄
+      if (rect.left < 50 || rect.width < 100) return 0;
+
       const hasModelRole = /model|assistant|ai|response/.test(role + cls);
       const hasText      = txt.length > 20;
       const isRichText   = el.querySelector('.markdown, .response-content, p') !== null;
       
-      // 回應區塊通常很大
-      const rect = el.getBoundingClientRect();
+      // 回應區塊通常很大且置中
+      const isCentered = rect.left > 50 && rect.right < window.innerWidth - 50;
       const hasSize = rect.width > 200 && rect.height > 40;
       
       let score = 0;
       if (hasModelRole) score += 5;
       if (hasText)      score += 2;
       if (isRichText)   score += 3;
-      if (hasSize)      score += 1;
+      if (hasSize)      score += 2;
+      if (isCentered)   score += 1;
       
       return score;
     }
