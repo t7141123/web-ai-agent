@@ -49,17 +49,13 @@ const CANDIDATES = {
     'button[aria-label="Send message"]',
     'button[aria-label="傳送訊息"]',
     'button[aria-label="送信"]',
+    '.send-button-container button',
+    '.input-buttons-wrapper-bottom button',
     'button.send-button',
     'button[data-test-id="send-button"]',
     'button[jsname*="send"]',
     'mat-icon-button[aria-label*="send" i]',
-    // 以圖示識別
-    'button:has(svg[data-icon="send"])',
-    'button:has(mat-icon:text-is("send"))',
-    // 位置特徵：輸入框旁邊的按鈕
-    'form button[type="submit"]',
-    '.input-area button:last-child',
-    '.chat-input button[type="button"]:last-of-type',
+    '.send-button-container',
   ],
 
   // AI 回應區塊
