@@ -183,8 +183,10 @@ export class GeminiWebClient {
       await inputEl.pressSequentially(prompt, { delay: 8 });
       await this.page.waitForTimeout(350);
 
+      await this._dismissAll(); // 發送前最後清障
       await this._clickSend();
 
+      this.logger.debug('⏳ 等待 AI 回應...');
       const response = await this._waitForResponse(timeout);
       if (!response) throw new Error('收到空回應');
 
@@ -381,9 +383,14 @@ export class GeminiWebClient {
     if (this.sel.sendButton) {
       try {
         const btn = this.page.locator(this.sel.sendButton).first();
-        if (await btn.isVisible({ timeout: 2000 })) { await btn.click(); return; }
-      } catch { /* ignore */ }
+        if (await btn.isVisible({ timeout: 2000 })) { 
+          this.logger.debug(`點擊發送按鈕: ${this.sel.sendButton}`);
+          await btn.click({ force: true }); 
+          return; 
+        }
+      } catch (e) { this.logger.debug(`按鈕點擊失敗: ${e.message}`); }
     }
+    this.logger.debug('按下 Enter 發送');
     await this.page.keyboard.press('Enter');
   }
 

@@ -17,6 +17,9 @@ import { Logger } from '../core/logger.js';
 const CACHE_PATH   = './browser/selectors.cache.json';
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 快取 7 天
 
+let lastAIFailureTime = 0;
+const AI_COOLDOWN_MS = 60 * 1000; // 429 後冷卻 1 分鐘
+
 // ── 各元素的語意候選 selector 清單（從最具體到最寬泛）──────────────────────
 const CANDIDATES = {
 
@@ -85,7 +88,9 @@ const CANDIDATES = {
     '.response-container .text-content',
     '.markdown-container',
     '.message-content',
-    'div.message-content'
+    'div.message-content',
+    '[data-message-author-role="assistant"]',
+    '.conversation-container .message-content',
   ],
 
   // Loading 指示器（等待回應時出現）
@@ -101,6 +106,9 @@ const CANDIDATES = {
     '[class*="thinking"]',
     'mat-progress-bar',
     'circle.loading',
+    '.loading-indicator-container',
+    'div[aria-label*="loading" i]',
+    'div[aria-label*="thinking" i]',
   ],
 
   // 新對話按鈕
@@ -114,6 +122,9 @@ const CANDIDATES = {
     'button.new-chat',
     'sidenav-item:first-child',
     '[jsname*="new_chat"]',
+    'button:has(span:text-is("New chat"))',
+    'button:has(span:text-is("新交談"))',
+    'a[data-navigation-id="new_chat"]',
   ],
 
   // 模型選擇器（Gemini 3 新增）
@@ -345,6 +356,11 @@ export class SelectorDiscovery {
 
   // ── 策略 3：Flash API 視覺推理 ───────────────────────────────────────────
   async _aiInference(page, elementType) {
+    if (Date.now() - lastAIFailureTime < AI_COOLDOWN_MS) {
+      this.logger.debug(`跳過 AI 推理 (冷卻中...)`);
+      return null;
+    }
+
     this.logger.info(`🤖 使用 Flash API 推理 selector: ${elementType}`);
 
     try {
@@ -400,7 +416,12 @@ ${domSnapshot}
 
       return null;
     } catch (e) {
-      this.logger.warn('AI 推理失敗:', e.message);
+      if (e.message.includes('429')) {
+        this.logger.warn('AI 推理遭遇 429 限制，進入冷卻模式');
+        lastAIFailureTime = Date.now();
+      } else {
+        this.logger.warn('AI 推理失敗:', e.message);
+      }
       return null;
     }
   }
