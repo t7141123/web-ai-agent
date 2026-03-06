@@ -112,6 +112,17 @@ const CANDIDATES = {
     'sidenav-item:first-child',
     '[jsname*="new_chat"]',
   ],
+
+  // 模型選擇器（Gemini 3 新增）
+  modelSelector: [
+    'button[aria-label*="模型選擇" i]',
+    'button[aria-label*="Model selector" i]',
+    '.model-selector-button',
+    'button:has-text("快捷")',
+    'button:has-text("思考型")',
+    'button:has-text("Pro")',
+    'header button:has(span:text-is("快捷"))',
+  ],
 };
 
 // ── 啟發式特徵（DOM 分析用）─────────────────────────────────────────────────
@@ -209,7 +220,7 @@ export class SelectorDiscovery {
 
   // ── 取得所有關鍵 selector（一次性全部偵測）──────────────────────────────
   async discoverAll(page) {
-    const keys    = ['input', 'sendButton', 'responseBlock', 'responseText', 'loadingIndicator', 'newChatButton'];
+    const keys    = ['input', 'sendButton', 'responseBlock', 'responseText', 'loadingIndicator', 'newChatButton', 'modelSelector'];
     const results = {};
 
     this.logger.info('🔍 開始全面偵測所有 selector...');
@@ -485,6 +496,7 @@ ${domSnapshot}
       responseText:     'AI 回應的實際文字內容元素。在回應容器內，包含格式化的 Markdown 文字。',
       loadingIndicator: '正在生成回應時顯示的載入動畫或進度指示器。',
       newChatButton:    '開始新對話的按鈕，通常在側邊欄頂部。',
+      modelSelector:    '模型選擇器按鈕，顯示當前使用的模型（如：快捷、思考型、Pro）。',
     };
     return descriptions[elementType] || `「${elementType}」互動元素`;
   }

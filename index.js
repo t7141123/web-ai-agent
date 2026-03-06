@@ -6,22 +6,22 @@ import boxen from 'boxen';
 import ora from 'ora';
 import { GolemAgent } from './core/agent.js';
 
-const VERSION = '3.0.0';
+const VERSION = '4.1.0';
 const API_KEY = process.env.GEMINI_API_KEY;
 
 function showBanner() {
   console.clear();
   console.log(boxen(
     chalk.bold.cyan(`
-  ██████╗  ██████╗ ██╗     ███████╗███╗   ███╗
- ██╔════╝ ██╔═══██╗██║     ██╔════╝████╗ ████║
- ██║  ███╗██║   ██║██║     █████╗  ██╔████╔██║
- ██║   ██║██║   ██║██║     ██╔══╝  ██║╚██╔╝██║
- ╚██████╔╝╚██████╔╝███████╗███████╗██║ ╚═╝ ██║
-  ╚═════╝  ╚═════╝ ╚══════╝╚══════╝╚═╝     ╚═╝`) +
-    chalk.white(`\n\n  自主 AI 智能體 v${VERSION}`) +
-    chalk.green(`\n  💰 零成本模式`) +
-    chalk.dim(`  Flash API 路由 × Gemini 網頁版`),
+  ██╗    ██╗███████╗██████╗      █████╗ ██╗     ██████╗ ███████╗███╗   ██╗████████╗
+  ██║    ██║██╔════╝██╔══██╗    ██╔══██╗██║    ██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝
+  ██║ █╗ ██║█████╗  ██████╔╝    ███████║██║    ██║  ███╗█████╗  ██╔██╗ ██║   ██║   
+  ██║███╗██║██╔══╝  ██╔══██╗    ██╔══██║██║    ██║   ██║██╔══╝  ██║╚██╗██║   ██║   
+  ╚███╔███╔╝███████╗██████╔╝    ██║  ██║██║    ╚██████╔╝███████╗██║ ╚████║   ██║   
+   ╚══╝╚══╝ ╚══════╝╚═════╝     ╚═╝  ╚═╝╚═╝     ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝`) +
+    chalk.white(`\n\n  Web AI Agent v${VERSION} — 零成本自主 AI 智能體`) +
+    chalk.green(`\n  💰 零成本模式 | ⚡ Gemini 3 (Flash)`) +
+    chalk.dim(`\n  Flash API 路由 × Gemini 網頁版`),
     { padding: 1, margin: 1, borderStyle: 'double', borderColor: 'cyan', textAlignment: 'center' }
   ));
 }
@@ -42,7 +42,7 @@ function showHelp() {
   ];
   console.log(chalk.bold.yellow('\n📖 指令:'));
   cmds.forEach(([cmd, desc]) => console.log(`  ${chalk.cyan(cmd.padEnd(18))} ${chalk.white(desc)}`));
-  console.log(chalk.dim('\n  其他輸入直接與 Golem 對話（自動智能路由）\n'));
+  console.log(chalk.dim('\n  其他輸入直接與 Web AI Agent 對話（自動智能路由）\n'));
 }
 
 function validateSetup() {

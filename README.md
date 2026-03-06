@@ -1,4 +1,4 @@
-# 🤖 Web AI Agent v3.1 — 零成本自主 AI 智能體
+# 🤖 Web AI Agent v1 — 零成本自主 AI 智能體
 
 > **一鍵安裝 · 跨平台 · 零成本**
 > Playwright 操控 Gemini 網頁版 × Flash API 智能路由 × 自動修復 Selector
