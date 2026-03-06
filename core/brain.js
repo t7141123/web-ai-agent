@@ -61,7 +61,8 @@ export class Brain {
     this.iteration++;
     const memories   = await this.memory.getRelevant(userInput, 5);
     const recentWork = await this.memory.getRecentWork(3);
-    const enriched   = this._buildPrompt(userInput, memories, recentWork, context);
+    const history    = await this.memory.getRecentChat(10);
+    const enriched   = this._buildPrompt(userInput, memories, recentWork, history, context);
 
     const routeResult = await this.router.route(enriched, SYSTEM_PROMPT);
     if (!routeResult.success) return this._fallbackResponse(new Error(routeResult.error));
@@ -74,16 +75,25 @@ export class Brain {
       await this.memory.store({ type: 'learning', content: parsed.learned, context: userInput.substring(0, 100), timestamp: Date.now() });
     }
 
+    // 持久化對話紀錄
+    await this.memory.store({ 
+      type: 'chat', 
+      content: `User: ${userInput}\nGolem: ${parsed.response}`, 
+      timestamp: Date.now(),
+      importance: 0.4
+    });
+
     if (this.iteration % this.reflectionInterval === 0) this._selfReflect().catch(() => {});
     return parsed;
   }
 
-  _buildPrompt(userInput, memories, recentWork, context) {
+  _buildPrompt(userInput, memories, recentWork, history, context) {
     let p = '';
+    if (history.length)    p += `## 💬 最近對話紀錄\n${history.map(h => h.content).join('\n---\n')}\n\n`;
     if (memories.length)   p += `## 📚 相關記憶\n${memories.map(m => `- [${m.type}] ${m.content}`).join('\n')}\n\n`;
     if (recentWork.length) p += `## 🔧 最近工作\n${recentWork.map(w => `- ${w.action}: ${w.summary}`).join('\n')}\n\n`;
     if (Object.keys(context).length) p += `## 🌍 當前環境\n${JSON.stringify(context, null, 2)}\n\n`;
-    p += `## 💬 用戶輸入\n${userInput}`;
+    p += `## 🎯 當前任務\n${userInput}`;
     return p;
   }
 
@@ -114,5 +124,8 @@ export class Brain {
 
   getRouterStats()  { return this.router.getStats(); }
   async shutdown()  { await this.router.shutdown(); }
-  clearHistory()    {}
+  async clearHistory() {
+    await this.memory.clear();
+    this.iteration = 0;
+  }
 }

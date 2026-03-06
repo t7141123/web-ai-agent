@@ -112,7 +112,7 @@ async function main() {
         return prompt();
       }
 
-      if (text === 'clear')    { agent.brain.clearHistory(); console.log(chalk.green('✅ 已清除')); return prompt(); }
+      if (text === 'clear')    { await agent.brain.clearHistory(); console.log(chalk.green('✅ 已清除')); return prompt(); }
       if (text === 'headless') { process.env.BROWSER_MODE = 'headless'; console.log(chalk.green('✅ 下次啟動瀏覽器時使用背景模式')); return prompt(); }
       if (text === 'headed')   { process.env.BROWSER_MODE = 'headed';   console.log(chalk.green('✅ 下次啟動瀏覽器時顯示視窗'));    return prompt(); }
       if (text === 'selectors' || text === 'sel') {
