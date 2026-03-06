@@ -83,6 +83,9 @@ const CANDIDATES = {
     '.response-text',
     'message-content[data-role="model"] .text',
     '.response-container .text-content',
+    '.markdown-container',
+    '.message-content',
+    'div.message-content'
   ],
 
   // Loading 指示器（等待回應時出現）
@@ -128,7 +131,7 @@ const CANDIDATES = {
 // ── 啟發式特徵（DOM 分析用）─────────────────────────────────────────────────
 const HEURISTICS = {
   input: {
-    // 找到 contenteditable + 在頁面底部區域
+    // 找到 contenteditable + 在頁面底部區域｀
     evaluate: (el) => {
       if (!el.contentEditable || el.contentEditable !== 'true') return 0;
       const rect = el.getBoundingClientRect();
@@ -151,11 +154,28 @@ const HEURISTICS = {
   },
   responseBlock: {
     evaluate: (el) => {
+      const tag  = el.tagName.toLowerCase();
+      if (tag === 'button' || tag === 'input' || tag === 'textarea') return 0;
+      
       const role = el.getAttribute('data-role') || el.getAttribute('role') || '';
       const cls  = el.className || '';
+      const txt  = el.innerText || '';
+      
       const hasModelRole = /model|assistant|ai|response/.test(role + cls);
-      const hasText = el.innerText?.length > 10;
-      return (hasModelRole ? 2 : 0) + (hasText ? 1 : 0);
+      const hasText      = txt.length > 20;
+      const isRichText   = el.querySelector('.markdown, .response-content, p') !== null;
+      
+      // 回應區塊通常很大
+      const rect = el.getBoundingClientRect();
+      const hasSize = rect.width > 200 && rect.height > 40;
+      
+      let score = 0;
+      if (hasModelRole) score += 5;
+      if (hasText)      score += 2;
+      if (isRichText)   score += 3;
+      if (hasSize)      score += 1;
+      
+      return score;
     }
   }
 };
@@ -285,7 +305,7 @@ export class SelectorDiscovery {
           } catch {}
         }
 
-        if (!best || bestScore === 0) return null;
+        if (!best || bestScore < 3) return null;
 
         // 生成這個元素的 selector
         return generateSelector(best);

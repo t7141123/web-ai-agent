@@ -52,6 +52,13 @@ const DISMISS = [
   'a:has-text("Continue without signing in")',
   'button[aria-label="Close"]',
   'button[aria-label="關閉"]',
+  '.tooltip-container button',
+  'div[role="tooltip"] button',
+  '.gb_Id', // 可能的登入按鈕/提示
+  'button:has-text("登入")',
+  'button:has-text("Sign in")',
+  'div[class*="popover"] button',
+  'div[class*="tooltip"] button',
 ];
 
 const BROWSER_ARGS = [
@@ -354,6 +361,9 @@ export class GeminiWebClient {
       this.sel.responseText, this.sel.responseBlock,
       'model-response .markdown', 'model-response',
       '.response-content', '[data-response-index]',
+      '.markdown-container', '.message-content',
+      '.message-content-container',
+      'div.message-content'
     ].filter(Boolean);
     for (const s of tries) {
       try {
