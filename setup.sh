@@ -265,12 +265,8 @@ echo ""
 echo -e "  ${CYAN}不需要 Google 帳號，以訪客身份直接使用 Gemini${RESET}"
 echo ""
 
-read -rp "  立即開啟瀏覽器測試訪客模式連線? [Y/n]: " DO_TEST
-if [[ "${DO_TEST:-y}" =~ ^[Yy]$ ]]; then
-    echo ""
-    info "開啟瀏覽器驗證訪客模式..."
-    node scripts/login.js
-fi
+info "開啟瀏覽器驗證訪客模式..."
+node scripts/login.js
 
 echo ""
 echo -e "  ${BOLD}啟動方式：${RESET}"
