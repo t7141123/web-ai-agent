@@ -52,13 +52,6 @@ const DISMISS = [
   'a:has-text("Continue without signing in")',
   'button[aria-label="Close"]',
   'button[aria-label="關閉"]',
-  '.tooltip-container button',
-  'div[role="tooltip"] button',
-  '.gb_Id', // 可能的登入按鈕/提示
-  // 只在特定容器內的登入按鈕（如彈窗或提示）
-  '.p-dialog button:has-text("登入")',
-  '.tooltip-container button:has-text("登入")',
-  'div[role="dialog"] button:has-text("登入")',
 ];
 
 const BROWSER_ARGS = [
@@ -183,10 +176,8 @@ export class GeminiWebClient {
       await inputEl.pressSequentially(prompt, { delay: 8 });
       await this.page.waitForTimeout(350);
 
-      await this._dismissAll(); // 發送前最後清障
       await this._clickSend();
 
-      this.logger.debug('⏳ 等待 AI 回應...');
       const response = await this._waitForResponse(timeout);
       if (!response) throw new Error('收到空回應');
 
@@ -326,7 +317,7 @@ export class GeminiWebClient {
           this.logger.debug(`💨 關閉: ${sel}`);
           await page.waitForTimeout(300);
         }
-      } catch { /* ignore */ }
+      } catch {}
     }
   }
 
@@ -363,9 +354,6 @@ export class GeminiWebClient {
       this.sel.responseText, this.sel.responseBlock,
       'model-response .markdown', 'model-response',
       '.response-content', '[data-response-index]',
-      '.markdown-container', '.message-content',
-      '.message-content-container',
-      'div.message-content'
     ].filter(Boolean);
     for (const s of tries) {
       try {
@@ -374,23 +362,24 @@ export class GeminiWebClient {
           const t = await els.last().innerText().catch(() => '');
           if (t?.trim()) return t.trim();
         }
-      } catch { /* ignore */ }
+      } catch {}
     }
     return '';
   }
 
   async _clickSend() {
-    if (this.sel.sendButton) {
-      try {
-        const btn = this.page.locator(this.sel.sendButton).first();
-        if (await btn.isVisible({ timeout: 2000 })) { 
-          this.logger.debug(`點擊發送按鈕: ${this.sel.sendButton}`);
-          await btn.click({ force: true }); 
-          return; 
-        }
-      } catch (e) { this.logger.debug(`按鈕點擊失敗: ${e.message}`); }
-    }
-    this.logger.debug('按下 Enter 發送');
+    const s = this.sel.sendButton || 'button.send-button';
+    try {
+      const btn = this.page.locator(s).first();
+      if (await btn.isVisible({ timeout: 2000 })) {
+        await btn.click();
+        await this.page.waitForTimeout(500);
+        // 如果按鈕還是可見且沒有變成「停止」按鈕，可能沒點中或無反應，補一個 Enter
+        const stillVisible = await btn.isVisible({ timeout: 500 }).catch(() => false);
+        if (stillVisible) await this.page.keyboard.press('Enter');
+        return;
+      }
+    } catch {}
     await this.page.keyboard.press('Enter');
   }
 
@@ -404,7 +393,7 @@ export class GeminiWebClient {
           return;
         }
       }
-    } catch { /* ignore */ }
+    } catch {}
     await this.page.goto(GEMINI_URL, { waitUntil: 'domcontentloaded' });
     await this.page.waitForTimeout(2000);
     await this._dismissAll();

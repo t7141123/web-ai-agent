@@ -265,6 +265,7 @@ echo ""
 echo -e "  ${CYAN}不需要 Google 帳號，以訪客身份直接使用 Gemini${RESET}"
 echo ""
 
+echo ""
 info "開啟瀏覽器驗證訪客模式..."
 node scripts/login.js
 

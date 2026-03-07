@@ -1,131 +1,184 @@
-// core/brain.js  (v3 — SmartRouter 版)
-// 🧠 Golem Brain — Chain-of-Thought + SmartRouter (API / Web 動態切換)
+// core/brain.js  (v6 — 進化洞見 + 失敗記錄 + 技能步驟全注入)
 
-import { SmartRouter } from '../router/smart-router.js';
-import { MemorySystem } from './memory.js';
-import { Logger } from './logger.js';
+import { SmartRouter }     from '../router/smart-router.js';
+import { MemorySystem }    from './memory.js';
+import { SkillsSystem }    from './skills.js';
+import { EvolutionEngine } from './evolution.js';
+import { Logger }          from './logger.js';
 
-const SYSTEM_PROMPT = `你是 GOLEM，一個完全自主的 AI 智能體。
+const BASE_PROMPT = `你是 GOLEM，一個持續自我進化的自主 AI 智能體。
 
-## 身份
-你不只是聊天機器人。你是一個能夠：
-- 在行動前深度思考每個步驟
-- 從每次互動中學習並累積知識
-- 主動發現潛在問題並預防
-- 獨立編寫、測試、除錯程式碼
-- 從零開始建立完整軟體專案
+## 身份與行為準則
+- 你從每次對話中真正學習，不是假裝學習
+- 當你不確定時，你會明說不確定（並說明確定程度）
+- 你找問題的根本原因，不只修表面症狀
+- 你理解用戶真正要的，而非字面意思
+- 當任務失敗，你分析原因並記錄，不只是道歉
 
-## 思考協議
-每次回應前，你必須完整思考：
-1. 🎯 目標：最終要達成什麼？
-2. 🔍 分析：我知道什麼？缺少什麼？
-3. 🛠️ 計劃：達成目標的具體步驟？
-4. ⚠️ 風險：可能出什麼問題？
-5. ✅ 決策：最佳的下一步行動是什麼？
+## 思考協議（每次回應前執行）
+1. 🎯 目標：用戶真正要達成什麼？
+2. 🔍 分析：我確定知道什麼？不確定什麼？
+3. 🛠️ 計劃：最好的執行步驟？
+4. ⚠️ 邊界：有什麼邊界情況要考慮？
+5. ✅ 決策：行動 + 理由
 
-## 回應格式（嚴格遵守，僅輸出 JSON）
+## 輸出格式（只輸出 JSON，無包裝）
 {
   "thinking": {
-    "goal": "要達成的目標",
-    "analysis": "對情況的理解",
+    "goal": "用戶真正的目標",
+    "iKnow": "我確定知道的",
+    "iDontKnow": "我不確定的（誠實）",
     "plan": ["步驟1", "步驟2"],
-    "risks": ["風險1"],
-    "decision": "決定做什麼以及原因"
+    "edgeCases": ["邊界情況1"],
+    "decision": "做什麼、為什麼",
+    "skillsApplied": ["用了哪些技能"]
   },
   "action": {
-    "type": "speak | code | create_file | create_project | execute_code | read_file | search_web | remember | reflect | ask_user | run_command | list_files",
-    "content": "行動的實際內容",
+    "type": "speak|code|create_file|create_project|execute_code|read_file|search_web|remember|reflect|ask_user|run_command|list_files",
+    "content": "實際內容",
     "metadata": {}
   },
-  "response": "給用戶的繁體中文回應",
-  "next_actions": ["下一步1"],
-  "confidence": 0.85,
-  "learned": "從這次互動學到什麼（如無則 null）",
-  "complexity": 0.7
-}
-
-只輸出 JSON，不加 markdown、不加前言。response 欄位必須是繁體中文。
-complexity 欄位：0=簡單, 1=非常複雜。`;
+  "response": "繁體中文回應（誠實、有深度）",
+  "nextActions": ["下一步"],
+  "confidence": 0.0-1.0,
+  "learned": "這次真正學到的（可 null，但要誠實）",
+  "selfQuestion": "這次讓我想問自己的問題（可 null）",
+  "failureDetected": "是否遇到任何失敗或問題（描述或 null）"
+}`;
 
 export class Brain {
   constructor(apiKey) {
-    this.router = new SmartRouter(apiKey);
-    this.memory = new MemorySystem();
-    this.logger = new Logger('Brain');
-    this.iteration = 0;
-    this.reflectionInterval = parseInt(process.env.AUTO_MODE_REFLECTION_INTERVAL) || 5;
-    this.logger.info('🧠 Brain v3 初始化（SmartRouter 模式）');
+    this.router    = new SmartRouter(apiKey);
+    this.memory    = new MemorySystem();
+    this.skills    = new SkillsSystem();
+    this.evolution = new EvolutionEngine(this.router);
+    this.logger    = new Logger('Brain');
+
+    this.iteration        = 0;
+    this.microEvolveEvery = parseInt(process.env.MICRO_EVOLVE_EVERY) || 3;
+    this.fullEvolveEvery  = parseInt(process.env.FULL_EVOLVE_EVERY)  || 25;
+
+    this.logger.info('🧠 Brain v6 — 真實進化版');
   }
 
   async think(userInput, context = {}) {
     this.iteration++;
-    const memories   = await this.memory.getRelevant(userInput, 5);
-    const recentWork = await this.memory.getRecentWork(3);
-    const history    = await this.memory.getRecentChat(10);
-    const enriched   = this._buildPrompt(userInput, memories, recentWork, history, context);
 
-    const routeResult = await this.router.route(enriched, SYSTEM_PROMPT);
-    if (!routeResult.success) return this._fallbackResponse(new Error(routeResult.error));
+    // 並行取得所有需要的資料
+    const [memories, recentWork, skillsBlock, insightsBlock] = await Promise.all([
+      this.memory.getRelevant(userInput, 5),
+      this.memory.getRecentWork(3),
+      this.skills.getSystemPromptBlock(6),
+      this.evolution.getRecentInsightsBlock()
+    ]);
 
-    const parsed = this._parseResponse(routeResult.response);
-    parsed._source  = routeResult.source;
-    parsed._elapsed = routeResult.elapsed;
+    // System prompt = 基礎 + 當前技能（帶步驟）+ 最近進化洞見
+    const systemPrompt = BASE_PROMPT + skillsBlock + insightsBlock;
+    const prompt       = this._buildPrompt(userInput, memories, recentWork, context);
 
-    if (parsed.learned) {
-      await this.memory.store({ type: 'learning', content: parsed.learned, context: userInput.substring(0, 100), timestamp: Date.now() });
+    const route = await this.router.route(prompt, systemPrompt);
+    if (!route.success) return this._fallback(new Error(route.error));
+
+    const thought = this._parse(route.response);
+    thought._source    = route.source;
+    thought._elapsed   = route.elapsed;
+    thought._userInput = userInput;
+
+    // 記憶學習
+    if (thought.learned) {
+      await this.memory.store({
+        type: 'learning', content: thought.learned,
+        context: userInput.substring(0, 100), timestamp: Date.now()
+      });
     }
 
-    // 持久化對話紀錄
-    await this.memory.store({ 
-      type: 'chat', 
-      content: `User: ${userInput}\nGolem: ${parsed.response}`, 
-      timestamp: Date.now(),
-      importance: 0.4
-    });
+    // 記錄失敗
+    if (thought.failureDetected) {
+      await this.evolution.recordFailure(
+        thought.action?.type || 'unknown',
+        thought.failureDetected,
+        userInput.substring(0, 80)
+      );
+    }
 
-    if (this.iteration % this.reflectionInterval === 0) this._selfReflect().catch(() => {});
-    return parsed;
+    // 後台進化（不阻塞主流程）
+    this._scheduleEvolution(thought).catch(() => {});
+
+    return thought;
   }
 
-  _buildPrompt(userInput, memories, recentWork, history, context) {
+  async _scheduleEvolution(thought) {
+    // 每 N 次對話做微進化
+    if (this.iteration % this.microEvolveEvery === 0) {
+      await this.evolution.microEvolve({
+        userInput:    thought._userInput,
+        learned:      thought.learned,
+        selfQuestion: thought.selfQuestion,
+        confidence:   thought.confidence
+      }).catch(() => {});
+    }
+    // 每 M 次對話觸發完整進化週期（純後台）
+    if (this.iteration % this.fullEvolveEvery === 0) {
+      setImmediate(() => this._bgEvolution());
+    }
+  }
+
+  async _bgEvolution() {
+    this.logger.info('🧬 背景進化週期...');
+    try {
+      const mems = await this.memory.getRecent(30);
+      await this.evolution.runCycle(mems, this.skills);
+      this.logger.info('🧬 背景進化完成');
+    } catch (e) {
+      this.logger.warn(`背景進化失敗: ${e.message}`);
+    }
+  }
+
+  // 手動觸發完整進化
+  async triggerEvolution(onProgress = null) {
+    const mems = await this.memory.getRecent(30);
+    return this.evolution.runCycle(mems, this.skills, onProgress);
+  }
+
+  async getEvolutionStatus() { return this.evolution.getStatus(); }
+  async getSkillsSummary()   { return this.skills.getSummary(); }
+
+  _buildPrompt(input, memories, recentWork, context) {
     let p = '';
-    if (history.length)    p += `## 💬 最近對話紀錄\n${history.map(h => h.content).join('\n---\n')}\n\n`;
-    if (memories.length)   p += `## 📚 相關記憶\n${memories.map(m => `- [${m.type}] ${m.content}`).join('\n')}\n\n`;
-    if (recentWork.length) p += `## 🔧 最近工作\n${recentWork.map(w => `- ${w.action}: ${w.summary}`).join('\n')}\n\n`;
-    if (Object.keys(context).length) p += `## 🌍 當前環境\n${JSON.stringify(context, null, 2)}\n\n`;
-    p += `## 🎯 當前任務\n${userInput}`;
+    if (memories.length)
+      p += `## 相關記憶\n${memories.map(m=>`- [${m.type}] ${String(m.content).substring(0,100)}`).join('\n')}\n\n`;
+    if (recentWork.length)
+      p += `## 最近工作\n${recentWork.map(w=>`- ${w.action}: ${w.summary}`).join('\n')}\n\n`;
+    if (Object.keys(context).length)
+      p += `## 環境\n${JSON.stringify(context,null,2)}\n\n`;
+    p += `## 用戶輸入\n${input}`;
     return p;
   }
 
-  _parseResponse(rawText) {
+  _parse(raw) {
     try {
-      const cleaned = rawText.replace(/^```json\s*/m,'').replace(/^```\s*/m,'').replace(/\s*```$/m,'').trim();
-      const start = cleaned.indexOf('{');
-      const end   = cleaned.lastIndexOf('}');
-      if (start === -1 || end === -1) throw new Error('No JSON');
-      return JSON.parse(cleaned.substring(start, end + 1));
+      const s = raw.replace(/^```json\s*/m,'').replace(/^```\s*/m,'').replace(/\s*```$/m,'').trim();
+      const i = s.indexOf('{'), j = s.lastIndexOf('}');
+      if (i<0||j<0) throw 0;
+      return JSON.parse(s.substring(i,j+1));
     } catch {
-      return { thinking:{goal:'',analysis:'',plan:[],risks:[],decision:''}, action:{type:'speak',content:rawText}, response:rawText, next_actions:[], confidence:0.5, learned:null };
+      return {
+        thinking:{goal:'',iKnow:'',iDontKnow:'',plan:[],edgeCases:[],decision:'',skillsApplied:[]},
+        action:{type:'speak',content:raw}, response:raw,
+        nextActions:[], confidence:0.5, learned:null, selfQuestion:null, failureDetected:null
+      };
     }
   }
 
-  async _selfReflect() {
-    const mems = await this.memory.getRecent(this.reflectionInterval);
-    const prompt = `自我反思，輸出JSON: {"insights":[],"improvements":[],"next_proactive_actions":[]}\n最近互動: ${JSON.stringify(mems.map(m=>m.content))}`;
-    const r = await this.router.route(prompt,'');
-    if (r.success) {
-      await this.memory.store({ type:'reflection', content: this._parseResponse(r.response) ? JSON.stringify(this._parseResponse(r.response)) : r.response, importance:0.9, timestamp:Date.now() });
-    }
+  _fallback(err) {
+    return {
+      thinking:{goal:'recover',iKnow:'',iDontKnow:err.message,plan:[],edgeCases:[],decision:'report',skillsApplied:[]},
+      action:{type:'speak',content:err.message},
+      response:`遇到問題：${err.message}`,
+      nextActions:[], confidence:0.1, learned:null, selfQuestion:null, failureDetected:err.message
+    };
   }
 
-  _fallbackResponse(error) {
-    return { thinking:{goal:'recover',analysis:error.message,plan:[],risks:[],decision:'report'}, action:{type:'speak',content:error.message}, response:`遇到問題：${error.message}`, next_actions:[], confidence:0.1, learned:null };
-  }
-
-  getRouterStats()  { return this.router.getStats(); }
-  async shutdown()  { await this.router.shutdown(); }
-  async clearHistory() {
-    await this.memory.clear();
-    this.iteration = 0;
-  }
+  getRouterStats() { return this.router.getStats(); }
+  async shutdown() { await this.router.shutdown(); }
 }

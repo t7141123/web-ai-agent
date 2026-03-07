@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "selectors": {
+    "input": "div.ql-editor[contenteditable=\"true\"]",
+    "sendButton": "button.send-button.submit",
+    "responseBlock": "[data-test-id=\"side-nav-menu-button\"]",
+    "loadingIndicator": "mat-progress-spinner"
+  },
+  "updatedAt": {
+    "input": 1772867654300,
+    "sendButton": 1772867654506,
+    "responseBlock": 1772867654716,
+    "loadingIndicator": 1772867655644
+  },
+  "lastDiscovered": "2026-03-07T07:14:15.644Z"
+}

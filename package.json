@@ -1,5 +1,5 @@
 {
-  "name": "web-ai-agent",
+  "name": "golem-agent",
   "version": "4.1.0",
   "description": "Zero-cost Autonomous AI Agent — Playwright + Gemini Guest Mode + Flash API router",
   "main": "index.js",
@@ -27,7 +27,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "eslint": "^10.0.2",
+    "eslint": "^10.0.3",
     "globals": "^17.4.0"
   }
 }

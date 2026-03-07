@@ -1,4 +1,4 @@
-# 🤖 Web AI Agent v1 — 零成本自主 AI 智能體
+# 🤖 GOLEM Agent v3.1 — 零成本自主 AI 智能體
 
 > **一鍵安裝 · 跨平台 · 零成本**
 > Playwright 操控 Gemini 網頁版 × Flash API 智能路由 × 自動修復 Selector
@@ -8,7 +8,6 @@
 ## ⚡ 一鍵安裝
 
 ### Windows
-
 ```cmd
 # 方法 1：雙擊執行（最簡單）
 setup.bat
@@ -19,19 +18,16 @@ Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force
 ```
 
 ### macOS / Linux
-
 ```bash
 chmod +x setup.sh && ./setup.sh
 ```
 
 ### 已有 Node.js（任何平台）
-
 ```bash
 node setup/install.js
 ```
 
 安裝程式會自動完成：
-
 - ✅ 偵測並安裝 Node.js 18+（如未安裝）
 - ✅ 安裝所有 npm 套件
 - ✅ 下載 Chromium 瀏覽器
@@ -72,18 +68,18 @@ start.bat  或  npm start
 
 ### 所有指令
 
-| 指令           | 說明                                         |
-| -------------- | -------------------------------------------- |
-| `auto <目標>`  | 自主模式，自動規劃並完成複雜目標             |
-| `build <描述>` | 一鍵建立完整軟體專案                         |
-| `selectors`    | 查看 Gemini UI selector 快取狀態             |
-| `rediscover`   | 強制重新偵測所有 selector（Google 改版後用） |
-| `headed`       | 下次開啟瀏覽器時顯示視窗                     |
-| `headless`     | 下次開啟瀏覽器時背景執行                     |
-| `stats`        | 路由統計（API vs 免費網頁版比例）            |
-| `memory`       | 查看記憶庫                                   |
-| `clear`        | 清除對話歷史                                 |
-| `exit`         | 退出並關閉瀏覽器                             |
+| 指令 | 說明 |
+|------|------|
+| `auto <目標>` | 自主模式，自動規劃並完成複雜目標 |
+| `build <描述>` | 一鍵建立完整軟體專案 |
+| `selectors` | 查看 Gemini UI selector 快取狀態 |
+| `rediscover` | 強制重新偵測所有 selector（Google 改版後用）|
+| `headed` | 下次開啟瀏覽器時顯示視窗 |
+| `headless` | 下次開啟瀏覽器時背景執行 |
+| `stats` | 路由統計（API vs 免費網頁版比例）|
+| `memory` | 查看記憶庫 |
+| `clear` | 清除對話歷史 |
+| `exit` | 退出並關閉瀏覽器 |
 
 ---
 
@@ -131,25 +127,21 @@ GEMINI_MODEL=gemini-2.0-flash-thinking-exp
 ## 🔧 故障排除
 
 **Chromium 無法啟動（Linux）**
-
 ```bash
 npx playwright install-deps chromium
 ```
 
 **Selector 失效（Google 更新了 Gemini 介面）**
-
 ```
 你 → rediscover
 ```
 
 **Session 過期（需重新登入）**
-
 ```bash
 npm run login   # 或 login.sh / login.bat
 ```
 
 **Windows 執行政策錯誤**
-
 ```powershell
 Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force
 ```

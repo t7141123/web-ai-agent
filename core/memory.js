@@ -111,22 +111,6 @@ export class MemorySystem {
     }
   }
 
-  // Get recent conversation history
-  async getRecentChat(count = 6) {
-    try {
-      const data = await fs.readJSON(MEMORY_FILE);
-      return data.memories
-        .filter(m => m.type === 'chat')
-        .slice(0, count)
-        .reverse(); // Return in chronological order
-    } catch (e) {
-      return this.shortTerm
-        .filter(m => m.type === 'chat')
-        .slice(0, count)
-        .reverse();
-    }
-  }
-
   // Get recent work entries
   async getRecentWork(limit = 5) {
     try {
@@ -193,8 +177,7 @@ export class MemorySystem {
       'error': 0.7,
       'project': 1.0,
       'code': 0.6,
-      'fact': 0.5,
-      'chat': 0.3 // Lower base importance for regular chat
+      'fact': 0.5
     };
     return typeWeights[item.type] || 0.5;
   }
