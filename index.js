@@ -306,6 +306,8 @@ async function main() {
     await agent.shutdown();
     process.exit(0);
   });
+
+  ask(); // 啟動對話循環
 }
 
 main().catch(e => { console.error(chalk.red('Fatal:'), e.message); process.exit(1); });
