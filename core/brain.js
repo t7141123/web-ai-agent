@@ -138,6 +138,10 @@ export class Brain {
       // 從記憶中提煉新技能
       await this.evolution.extractSkillsFromMemory(this.memory, this.skills);
 
+      // 記憶系統維護：壓縮舊記憶 + 補全向量
+      await this.memory.consolidate();
+      await this.memory.backfillEmbeddings();
+
       this.logger.info('🧬 背景進化完成');
     } catch (e) {
       this.logger.warn(`背景進化失敗: ${e.message}`);

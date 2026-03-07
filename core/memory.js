@@ -16,6 +16,10 @@ export class MemorySystem {
     if (apiKey) {
       this.genAI = new GoogleGenerativeAI(apiKey);
       this.embedModel = this.genAI.getGenerativeModel({ model: 'text-embedding-004' });
+      this.flashModel = this.genAI.getGenerativeModel({
+        model: 'gemini-1.5-flash',
+        generationConfig: { responseMimeType: 'application/json' }
+      });
     }
 
     this._initP = this._init();
@@ -30,6 +34,56 @@ export class MemorySystem {
       await fs.writeJSON(WORK_LOG_FILE, { entries: [] });
     }
     this.logger.info('💾 記憶系統就緒');
+  }
+
+  // ── 記憶壓縮與摘要 (Consolidation) ──────────────────────────────────────
+  async consolidate() {
+    await this._initP;
+    if (!this.flashModel) return;
+
+    try {
+      const data = await fs.readJSON(MEMORY_FILE);
+      if (data.memories.length < 50) return; // 記憶量夠多才觸發
+
+      // 挑選最久未使用的、且非最近 30 條的記憶進行壓縮
+      const pool = data.memories
+        .slice(30)
+        .sort((a, b) => (a.accessCount || 0) - (b.accessCount || 0))
+        .slice(0, 15);
+
+      if (pool.length < 5) return;
+
+      this.logger.info(`🧬 正在壓縮 ${pool.length} 條原始記憶...`);
+
+      const prompt = `你是一個記憶管理專家。請分析以下零散的原始記憶，將其提煉為 1-3 條「高階知識」或「核心準則」。
+保留最重要的事實、學習到的模式、或反覆出現的錯誤教訓。
+輸入 JSON: ${JSON.stringify(pool.map(m => ({ type: m.type, content: m.content })))}
+
+輸出必須是 JSON 陣列，格式如下:
+[{"type": "fact|learning|reflection", "content": "..."}]`;
+
+      const result = await this.flashModel.generateContent(prompt);
+      const summarized = JSON.parse(result.response.text());
+
+      if (Array.isArray(summarized)) {
+        // 1. 移除舊記憶
+        const poolIds = new Set(pool.map(m => m.id));
+        data.memories = data.memories.filter(m => !poolIds.has(m.id));
+
+        // 2. 加入新摘要記憶 (importance = 0.9)
+        for (const s of summarized) {
+          await this.store({
+            ...s,
+            importance: 0.9,
+            context: `來自 ${pool.length} 條記憶的自動摘要`
+          });
+        }
+
+        this.logger.info(`✅ 壓縮完成: ${pool.length} 條 → ${summarized.length} 條`);
+      }
+    } catch (e) {
+      this.logger.warn(`記憶壓縮失敗: ${e.message}`);
+    }
   }
 
   // ── 儲存新記憶（含自動生成向量）────────────────────────────────────────
