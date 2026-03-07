@@ -93,6 +93,19 @@ async function main() {
 
   const agent = new GolemAgent(API_KEY);
 
+  // 🏥 執行系統健康檢查
+  const spHealth = ora(chalk.cyan('系統診斷中...')).start();
+  const { SystemDiagnostics } = await import('./core/diagnostics.js');
+  const diagnostics = new SystemDiagnostics(agent.brain);
+  const health = await diagnostics.checkHealth();
+  spHealth.stop();
+
+  if (health.overall === 'HEALTHY') {
+    console.log(chalk.green('✅ 系統狀態良好 (API 延遲: ' + health.api.latency + ')'));
+  } else {
+    console.log(chalk.yellow('⚠️ 系統狀態異常: ' + (health.api.error || '硬體/網路限制')));
+  }
+
   // 啟動資訊
   const [evo, skills] = await Promise.all([
     agent.brain.getEvolutionStatus(),
