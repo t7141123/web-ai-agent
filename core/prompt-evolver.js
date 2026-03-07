@@ -10,20 +10,73 @@ import { Logger } from './logger.js';
 const PROMPT_FILE    = './memory/prompt_versions.json';
 const FEEDBACK_FILE  = './memory/quality_feedback.json';
 
+const DEFAULT_BASE_PROMPT = `你是 GOLEM，一個持續自我進化的自主 AI 智能體。
+
+## 身份與行為準則
+- 你從每次對話中真正學習，不是假裝學習
+- 當你不確定時，你會明說不確定（並說明確定程度）
+- 你找問題的根本原因，不只修表面症狀
+- 你理解用戶真正要的，而非字面意思
+- 當任務失敗，你分析原因並記錄，不只是道歉
+
+## 思考協議（每次回應前執行）
+1. 🎯 目標：用戶真正要達成什麼？
+2. 🔍 分析：我確定知道什麼？不確定什麼？
+3. 🛠️ 計劃：最好的執行步驟？
+4. ⚠️ 邊界：有什麼邊界情況要考慮？
+5. ✅ 決策：行動 + 理由
+
+## 輸出格式（只輸出 JSON，無包裝）
+{
+  "thinking": {
+    "goal": "用戶真正的目標",
+    "iKnow": "我確定知道的",
+    "iDontKnow": "我不確定的（誠實）",
+    "plan": ["步驟1", "步驟2"],
+    "edgeCases": ["邊界情況1"],
+    "decision": "做什麼、為什麼",
+    "skillsApplied": ["用了哪些技能"]
+  },
+  "action": {
+    "type": "speak|code|create_file|create_project|execute_code|read_file|search_web|remember|reflect|ask_user|run_command|list_files",
+    "content": "實際內容",
+    "metadata": {}
+  },
+  "response": "繁體中文回應（誠實、有深度）",
+  "nextActions": ["下一步"],
+  "confidence": 0.0-1.0,
+  "learned": "這次真正學到的（可 null，但要誠實）",
+  "selfQuestion": "這次讓我想問自己的問題（可 null）",
+  "failureDetected": "是否遇到任何失敗或問題（描述或 null）"
+}`;
+
 export class PromptEvolver {
-  constructor() {
+  constructor(router) {
+    this.router = router;
     this.logger = new Logger('PromptEvolver');
+    this._isEvolving = false;
     this._initP = this._init();
   }
 
   async _init() {
     await fs.ensureDir('./memory');
     if (!await fs.pathExists(PROMPT_FILE)) {
-      await fs.writeJSON(PROMPT_FILE, { versions: [], activeVersion: 0 }, { spaces: 2 });
+      await fs.writeJSON(PROMPT_FILE, { 
+        versions: [{ version: 1, prompt: DEFAULT_BASE_PROMPT, reason: "Initial", at: Date.now() }], 
+        activeVersion: 1 
+      }, { spaces: 2 });
     }
     if (!await fs.pathExists(FEEDBACK_FILE)) {
       await fs.writeJSON(FEEDBACK_FILE, { feedbacks: [], stats: { total: 0, satisfied: 0, unsatisfied: 0 } }, { spaces: 2 });
     }
+  }
+
+  async getActivePrompt() {
+    await this._initP;
+    const data = await fs.readJSON(PROMPT_FILE).catch(() => null);
+    if (!data || !data.versions || data.versions.length === 0) return DEFAULT_BASE_PROMPT;
+    const active = data.versions.find(v => v.version === data.activeVersion) || data.versions[0];
+    return active.prompt;
   }
 
   // ── 記錄對話品質回饋 ───────────────────────────────────────────────────
@@ -44,6 +97,75 @@ export class PromptEvolver {
     else data.stats.unsatisfied++;
 
     await fs.writeJSON(FEEDBACK_FILE, data, { spaces: 2 });
+    
+    // Check if we need to evolve the prompt based on recent negative feedback
+    await this._checkAndEvolve(data.feedbacks);
+  }
+
+  async _checkAndEvolve(feedbacks) {
+    const recent = feedbacks.slice(0, 10);
+    if (recent.length < 5) return;
+    
+    const unsatisfiedCount = recent.filter(f => !f.satisfied).length;
+    // 如果最近有 40% 的互動或超過 3 次是負面回饋，觸發優化
+    if (unsatisfiedCount >= Math.max(3, recent.length * 0.4)) {
+      if (this._isEvolving) return;
+      this._isEvolving = true;
+      try {
+        await this.evolvePrompt(recent);
+      } finally {
+        this._isEvolving = false;
+      }
+    }
+  }
+
+  async evolvePrompt(recentFeedbacks) {
+    this.logger.info("📉 偵測到近期滿意度下降，啟動提示詞自我優化機制...");
+    
+    const currentPrompt = await this.getActivePrompt();
+    const failures = recentFeedbacks.filter(f => !f.satisfied).map(f => `- 用戶輸入: "${f.userInput}"\n  原因推測: ${f.signal}`).join('\n');
+    
+    const prompt = `你是 GOLEM 的核心提示詞優化器。
+以下是目前的基礎提示詞（Base Prompt）：
+\`\`\`text
+${currentPrompt}
+\`\`\`
+
+最近我們收到了幾次用戶的不滿意回饋（可能是我們的回應沒切中要害、語氣不對、或沒有真正解決問題）：
+${failures}
+
+請分析這些失敗模式，並給出一份**微調過、改進後的新 Base Prompt**。
+注意：
+1. 必須保留原本的 JSON 輸出格式（包含 thinking, action, response, skillsApplied 等所有欄位）。
+2. 在「身份與行為準則」或「思考協議」中加入新的原則，以避免最近發生的錯誤模式。
+3. 不要把提示詞改得太長，保持簡潔有力。
+
+輸出純 JSON 格式：
+{
+  "analysis": "分析為什麼最近會收到負面回饋",
+  "newPrompt": "完整的新版提示詞字串",
+  "reason": "簡短說明這次改版的重點"
+}`;
+
+    try {
+      if (!this.router) return;
+      const res = await this.router.route(prompt, "");
+      if (res.success) {
+        let parsed;
+        try {
+          const s = res.response.replace(/^```json\s*/m,'').replace(/^```\s*/m,'').replace(/\s*```$/m,'').trim();
+          const i = s.indexOf('{'), j = s.lastIndexOf('}');
+          parsed = JSON.parse(s.substring(i, j+1));
+        } catch { return; }
+        
+        if (parsed && parsed.newPrompt && parsed.newPrompt.includes("thinking") && parsed.newPrompt.includes("action")) {
+          await this.saveVersion(parsed.newPrompt, parsed.reason || "Auto-evolved based on negative feedback");
+          this.logger.info(`✨ 提示詞優化完成！原因：${parsed.analysis}`);
+        }
+      }
+    } catch (e) {
+      this.logger.warn(`提示詞優化失敗: ${e.message}`);
+    }
   }
 
   // ── 從用戶行為推測滿意度 ───────────────────────────────────────────────

@@ -4,55 +4,17 @@ import { SmartRouter }     from '../router/smart-router.js';
 import { MemorySystem }    from './memory.js';
 import { SkillsSystem }    from './skills.js';
 import { EvolutionEngine } from './evolution.js';
+import { PromptEvolver }   from './prompt-evolver.js';
 import { Logger }          from './logger.js';
-
-const BASE_PROMPT = `你是 GOLEM，一個持續自我進化的自主 AI 智能體。
-
-## 身份與行為準則
-- 你從每次對話中真正學習，不是假裝學習
-- 當你不確定時，你會明說不確定（並說明確定程度）
-- 你找問題的根本原因，不只修表面症狀
-- 你理解用戶真正要的，而非字面意思
-- 當任務失敗，你分析原因並記錄，不只是道歉
-
-## 思考協議（每次回應前執行）
-1. 🎯 目標：用戶真正要達成什麼？
-2. 🔍 分析：我確定知道什麼？不確定什麼？
-3. 🛠️ 計劃：最好的執行步驟？
-4. ⚠️ 邊界：有什麼邊界情況要考慮？
-5. ✅ 決策：行動 + 理由
-
-## 輸出格式（只輸出 JSON，無包裝）
-{
-  "thinking": {
-    "goal": "用戶真正的目標",
-    "iKnow": "我確定知道的",
-    "iDontKnow": "我不確定的（誠實）",
-    "plan": ["步驟1", "步驟2"],
-    "edgeCases": ["邊界情況1"],
-    "decision": "做什麼、為什麼",
-    "skillsApplied": ["用了哪些技能"]
-  },
-  "action": {
-    "type": "speak|code|create_file|create_project|execute_code|read_file|search_web|remember|reflect|ask_user|run_command|list_files",
-    "content": "實際內容",
-    "metadata": {}
-  },
-  "response": "繁體中文回應（誠實、有深度）",
-  "nextActions": ["下一步"],
-  "confidence": 0.0-1.0,
-  "learned": "這次真正學到的（可 null，但要誠實）",
-  "selfQuestion": "這次讓我想問自己的問題（可 null）",
-  "failureDetected": "是否遇到任何失敗或問題（描述或 null）"
-}`;
 
 export class Brain {
   constructor(apiKey) {
-    this.router    = new SmartRouter(apiKey);
-    this.memory    = new MemorySystem(apiKey);
-    this.skills    = new SkillsSystem();
-    this.evolution = new EvolutionEngine(this.router);
-    this.logger    = new Logger('Brain');
+    this.router        = new SmartRouter(apiKey);
+    this.memory        = new MemorySystem(apiKey);
+    this.skills        = new SkillsSystem();
+    this.evolution     = new EvolutionEngine(this.router);
+    this.promptEvolver = new PromptEvolver(this.router);
+    this.logger        = new Logger('Brain');
 
     // 讓進化引擎可以直接操作技能系統
     this.evolution.setSkillsRef(this.skills);
@@ -68,15 +30,16 @@ export class Brain {
     this.iteration++;
 
     // 並行取得所有需要的資料
-    const [memories, recentWork, skillsBlock, insightsBlock] = await Promise.all([
+    const [memories, recentWork, skillsBlock, insightsBlock, basePrompt] = await Promise.all([
       this.memory.getRelevant(userInput, 5),
       this.memory.getRecentWork(3),
       this.skills.getSystemPromptBlock(6),
-      this.evolution.getRecentInsightsBlock()
+      this.evolution.getRecentInsightsBlock(),
+      this.promptEvolver.getActivePrompt()
     ]);
 
     // System prompt = 基礎 + 當前技能（帶步驟）+ 最近進化洞見
-    const systemPrompt = BASE_PROMPT + skillsBlock + insightsBlock;
+    const systemPrompt = basePrompt + "\n" + skillsBlock + insightsBlock;
     const prompt       = this._buildPrompt(userInput, memories, recentWork, context);
 
     const route = await this.router.route(prompt, systemPrompt);
@@ -108,6 +71,36 @@ export class Brain {
     this._scheduleEvolution(thought).catch(() => {});
 
     return thought;
+  }
+
+  // 新增：處理執行結果，更新技能強度
+  async processOutcome(thought, result) {
+    const isSuccess = result?.success !== false && !result?.error;
+    
+    // 將執行結果和使用的技能關聯起來
+    const skillsApplied = thought.thinking?.skillsApplied || [];
+    
+    if (skillsApplied.length > 0) {
+      // 在本地快取找到對應 ID
+      const allSkills = await this.skills.getAll();
+      for (const skillName of skillsApplied) {
+        // 模糊比對名稱或 ID
+        const matched = allSkills.find(s => 
+          s.id === skillName || 
+          s.name.includes(skillName) || 
+          skillName.includes(s.name)
+        );
+        
+        if (matched) {
+          if (isSuccess && !thought.failureDetected) {
+            await this.skills.recordSuccess(matched.id, thought._userInput?.substring(0, 60));
+          } else {
+            const errorMsg = result?.error || thought.failureDetected || '執行失敗或未達預期';
+            await this.skills.recordFailure(matched.id, errorMsg);
+          }
+        }
+      }
+    }
   }
 
   async _scheduleEvolution(thought) {

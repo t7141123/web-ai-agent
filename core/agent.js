@@ -5,13 +5,12 @@ import ora     from 'ora';
 import { Brain }          from './brain.js';
 import { Executor }       from './executor.js';
 import { Logger }         from './logger.js';
-import { PromptEvolver }  from './prompt-evolver.js';
 
 export class GolemAgent {
   constructor(apiKey) {
     this.brain         = new Brain(apiKey);
     this.executor      = new Executor(this.brain.memory);
-    this.promptEvolver = new PromptEvolver();
+    this.promptEvolver = this.brain.promptEvolver;
     this.logger        = new Logger('Agent');
     this.isRunning     = false;
     this.name          = process.env.AGENT_NAME || 'Golem';
@@ -41,6 +40,10 @@ export class GolemAgent {
       sp.stop();
 
       const result = await this.executor.execute(thought.action);
+      
+      // 🔗 關鍵修復：將執行結果回傳給大腦，強化或降低剛才所用技能的信心度
+      await this.brain.processOutcome(thought, result);
+
       this._showThinking(thought);
       if (result.output) this._showResponse(thought.response, result);
 
@@ -203,6 +206,10 @@ export class GolemAgent {
         this._showThinking(thought);
 
         const result = await this.executor.execute(thought.action);
+        
+        // 🔗 關鍵修復：自主模式下也要回饋執行結果
+        await this.brain.processOutcome(thought, result);
+        
         if (result.output) this._showResponse(thought.response, result);
 
         // 告知 Planner 完成情況，以便決定下一步（或自動調整計畫）
