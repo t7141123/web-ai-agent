@@ -373,16 +373,81 @@ export class GeminiWebClient {
       'model-response .markdown', 'model-response',
       '.response-content', '[data-response-index]',
     ].filter(Boolean);
+
     for (const s of tries) {
       try {
         const els = this.page.locator(s);
         if (await els.count() > 0) {
+          // 嘗試用 innerHTML 取得結構化內容
+          const html = await els.last().innerHTML().catch(() => '');
+          if (html?.trim()) {
+            const md = this._htmlToMarkdown(html);
+            if (md.trim()) return md.trim();
+          }
+          // Fallback 到 innerText
           const t = await els.last().innerText().catch(() => '');
           if (t?.trim()) return t.trim();
         }
       } catch {}
     }
     return '';
+  }
+
+  // ── HTML → Markdown 簡易轉換（保留程式碼、標題、列表格式）──────────────
+  _htmlToMarkdown(html) {
+    let md = html;
+
+    // 程式碼區塊：<pre><code>...</code></pre> → ```...```
+    md = md.replace(/<pre[^>]*>\s*<code[^>]*class="[^"]*language-(\w+)"[^>]*>([\s\S]*?)<\/code>\s*<\/pre>/gi,
+      (_, lang, code) => `\n\`\`\`${lang}\n${this._decodeHtml(code).trim()}\n\`\`\`\n`);
+    md = md.replace(/<pre[^>]*>\s*<code[^>]*>([\s\S]*?)<\/code>\s*<\/pre>/gi,
+      (_, code) => `\n\`\`\`\n${this._decodeHtml(code).trim()}\n\`\`\`\n`);
+    md = md.replace(/<pre[^>]*>([\s\S]*?)<\/pre>/gi,
+      (_, code) => `\n\`\`\`\n${this._decodeHtml(code).trim()}\n\`\`\`\n`);
+
+    // 行內程式碼：<code>...</code> → `...`
+    md = md.replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, (_, code) => `\`${this._decodeHtml(code)}\``);
+
+    // 標題
+    md = md.replace(/<h1[^>]*>([\s\S]*?)<\/h1>/gi, '\n# $1\n');
+    md = md.replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, '\n## $1\n');
+    md = md.replace(/<h3[^>]*>([\s\S]*?)<\/h3>/gi, '\n### $1\n');
+    md = md.replace(/<h4[^>]*>([\s\S]*?)<\/h4>/gi, '\n#### $1\n');
+
+    // 粗體/斜體
+    md = md.replace(/<(strong|b)[^>]*>([\s\S]*?)<\/\1>/gi, '**$2**');
+    md = md.replace(/<(em|i)[^>]*>([\s\S]*?)<\/\1>/gi, '*$2*');
+
+    // 列表
+    md = md.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, '- $1\n');
+    md = md.replace(/<\/?[ou]l[^>]*>/gi, '\n');
+
+    // 段落分隔
+    md = md.replace(/<\/p>/gi, '\n\n');
+    md = md.replace(/<p[^>]*>/gi, '');
+    md = md.replace(/<br\s*\/?>/gi, '\n');
+
+    // 移除所有剩餘的 HTML 標籤
+    md = md.replace(/<[^>]+>/g, '');
+
+    // 解碼 HTML entities
+    md = this._decodeHtml(md);
+
+    // 清理多餘空行
+    md = md.replace(/\n{3,}/g, '\n\n');
+
+    return md.trim();
+  }
+
+  _decodeHtml(html) {
+    return html
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&#x27;/g, "'")
+      .replace(/&nbsp;/g, ' ');
   }
 
   async _clickSend() {
