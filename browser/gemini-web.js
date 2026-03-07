@@ -325,26 +325,44 @@ export class GeminiWebClient {
   //  UI 互動
   // ══════════════════════════════════════════════════════════════════════════
   async _waitForResponse(timeout) {
-    const start       = Date.now();
+    const start = Date.now();
     const responseSel = this.sel.responseBlock || 'model-response';
-    await this.page.waitForSelector(responseSel, { timeout: 25000 }).catch(() => {});
+    
+    // 預等回應區塊出現
+    await this.page.waitForSelector(responseSel, { timeout: 15000 }).catch(() => {});
 
-    let lastText = '', stable = 0;
+    let lastText = '', stableCount = 0;
+    const checkInterval = 500; // 縮短檢查間隔
+
     while (Date.now() - start < timeout) {
-      await this.page.waitForTimeout(750);
-      if (stable === 0) {
-        const blocked = await this._detectBlock();
-        if (blocked) throw new Error(`回應中遭遇阻擋: ${blocked}`);
-      }
-      const cur = await this._extractResponse();
-      if (cur && cur === lastText && cur.length > 10) {
-        if (++stable >= 3) {
-          const loadSel = this.sel.loadingIndicator || '.loading-indicator';
-          const loading = await this.page.locator(loadSel).count().catch(() => 0);
-          if (loading === 0) return cur;
-          stable = 0;
+      await this.page.waitForTimeout(checkInterval);
+
+      // 偵測是否被阻擋
+      const blocked = await this._detectBlock();
+      if (blocked) throw new Error(`回應中遭遇阻擋: ${blocked}`);
+
+      const curText = await this._extractResponse();
+      const loadSel = this.sel.loadingIndicator || 'mat-progress-bar, mat-progress-spinner, .loading-indicator';
+      const isLoading = await this.page.locator(loadSel).isVisible({ timeout: 100 }).catch(() => false);
+
+      if (curText) {
+        if (curText === lastText) {
+          stableCount++;
+        } else {
+          stableCount = 0;
+          lastText = curText;
         }
-      } else if (cur !== lastText) { stable = 0; lastText = cur; }
+
+        // 完結條件：
+        // 1. 如果 loading 指示器消失了，且內容已穩定 (至少 2 次檢查一致)
+        // 2. 或者內容極其穩定 (穩定 6 次以上，預防指示器偵測失效)
+        if (!isLoading && stableCount >= 2) {
+          return curText;
+        }
+        if (stableCount >= 6) {
+          return curText;
+        }
+      }
     }
     return lastText || '';
   }

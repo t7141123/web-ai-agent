@@ -66,14 +66,14 @@ const CANDIDATES = {
 
   // 回應文字內容
   responseText: [
-    "model-response .markdown",
-    "model-response .response-content",
-    "model-response p",
-    "[data-response-index] .markdown",
-    ".model-response-text",
-    ".response-text",
-    'message-content[data-role="model"] .text',
-    ".response-container .text-content",
+    'model-response .markdown',
+    'model-response .response-content',
+    'model-response [class*="markdown"]',
+    '.markdown',
+    '.message-content',
+    'model-response p',
+    '[data-response-index] .markdown',
+    '.model-response-text',
   ],
 
   // Loading 指示器（等待回應時出現）
