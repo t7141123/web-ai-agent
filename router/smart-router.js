@@ -4,9 +4,11 @@
 // 路由邏輯：
 //   Flash API  → 快速、簡單任務、指令解析、結構化輸出
 //   Gemini Web → 複雜推理、長文生成、程式碼、需要最新知識
+//   + 額度管理 → API 額度不足時自動降級到 Web
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { GeminiWebClient } from '../browser/gemini-web.js';
+import { QuotaManager } from '../core/quota-manager.js';
 import { Logger } from '../core/logger.js';
 
 const COMPLEXITY_THRESHOLD = parseFloat(process.env.COMPLEXITY_THRESHOLD) || 0.6;
@@ -42,10 +44,11 @@ const COMPLEXITY_RULES = {
 
 export class SmartRouter {
   constructor(apiKey) {
-    this.logger    = new Logger('Router');
-    this.genAI     = new GoogleGenerativeAI(apiKey);
-    this.webClient = null;
-    this.apiClient = this.genAI.getGenerativeModel({
+    this.logger       = new Logger('Router');
+    this.genAI        = new GoogleGenerativeAI(apiKey);
+    this.webClient    = null;
+    this.quotaManager = new QuotaManager();
+    this.apiClient    = this.genAI.getGenerativeModel({
       model: process.env.GEMINI_MODEL || 'gemini-2.0-flash',
       generationConfig: { temperature: 0.3, maxOutputTokens: 4096 }
     });
@@ -70,6 +73,16 @@ export class SmartRouter {
   _decide(prompt) {
     const tokenEstimate = Math.ceil(prompt.length / 3);
 
+    // 🔴 額度管理：API 額度不足時強制走 Web
+    if (!this.quotaManager.canCallAPI()) {
+      return {
+        route: 'web',
+        score: 0.99,
+        reason: '⚠️ API 額度不足，自動切換到 Web',
+        tokens: tokenEstimate
+      };
+    }
+
     // 強制走網頁版
     for (const pattern of COMPLEXITY_RULES.forceWeb) {
       if (pattern.test(prompt)) {
@@ -88,7 +101,7 @@ export class SmartRouter {
         return {
           route: 'api',
           score: 0.05,
-          reason: `輕量任務匹配`,
+          reason: '輕量任務匹配',
           tokens: tokenEstimate
         };
       }
@@ -119,33 +132,42 @@ export class SmartRouter {
     };
   }
 
-  // ── 呼叫 Flash API ────────────────────────────────────────────────────────
+  // ── 呼叫 Flash API（含額度管理與自動重試）──────────────────────────────
   async _callAPI(prompt, systemContext, decision) {
     this.stats.apiCalls++;
     const startTime = Date.now();
 
-    try {
-      const fullPrompt = systemContext
-        ? `${systemContext}\n\n---\n\n${prompt}`
-        : prompt;
+    const fullPrompt = systemContext
+      ? `${systemContext}\n\n---\n\n${prompt}`
+      : prompt;
 
+    // 使用 QuotaManager 的 callWithRetry 進行額度感知的 API 呼叫
+    const apiResult = await this.quotaManager.callWithRetry(async () => {
       const result = await this.apiClient.generateContent(fullPrompt);
-      const response = result.response.text();
-      const elapsed = Date.now() - startTime;
+      return result.response.text();
+    });
 
+    if (apiResult.success) {
+      const elapsed = Date.now() - startTime;
       return {
         success: true,
-        response,
+        response: apiResult.result,
         source: 'api',
         elapsed,
         decision,
-        cost: 'minimal' // Flash API 極低成本
+        cost: 'minimal'
       };
-    } catch (error) {
-      this.logger.error('API 呼叫失敗，降級到網頁版:', error.message);
-      // 降級策略：API 失敗自動改用網頁版
-      return this._callWeb(prompt, systemContext, { ...decision, reason: 'API fallback' });
     }
+
+    // 額度耗盡或重試失敗 → 降級到 Web
+    if (apiResult.shouldFallbackToWeb) {
+      this.logger.warn(`API ${apiResult.error}，降級到網頁版...`);
+      return this._callWeb(prompt, systemContext, { ...decision, reason: `API fallback (${apiResult.error})` });
+    }
+
+    // 其他錯誤
+    this.logger.error('API 呼叫失敗，降級到網頁版:', apiResult.error);
+    return this._callWeb(prompt, systemContext, { ...decision, reason: 'API fallback' });
   }
 
   // ── 呼叫 Gemini 網頁版 ────────────────────────────────────────────────────
@@ -194,9 +216,21 @@ export class SmartRouter {
     } catch (error) {
       this.logger.error('網頁版呼叫失敗:', error.message);
 
-      // 最後降級：回到 API
-      this.logger.warn('降級到 Flash API...');
-      return this._callAPI(prompt, systemContext, decision);
+      // 最後降級：回到 API（如果額度允許）
+      if (this.quotaManager.canCallAPI()) {
+        this.logger.warn('降級到 Flash API...');
+        return this._callAPI(prompt, systemContext, decision);
+      }
+
+      // 雙軌皆失敗
+      return {
+        success: false,
+        response: '',
+        source: 'none',
+        error: `API 與 Web 皆不可用: ${error.message}`,
+        elapsed: Date.now() - startTime,
+        decision
+      };
     }
   }
 
@@ -218,7 +252,8 @@ export class SmartRouter {
       ...this.stats,
       total,
       webPercentage: `${webPct}%`,
-      estimatedCostSaving: `${this.stats.webCalls} 次請求走免費網頁版`
+      estimatedCostSaving: `${this.stats.webCalls} 次請求走免費網頁版`,
+      quota: this.quotaManager.getStats()
     };
   }
 
