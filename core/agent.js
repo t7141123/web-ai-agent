@@ -159,26 +159,45 @@ export class GolemAgent {
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  //  自主模式
+  //  自主模式 (TaskPlanner 驅動)
   // ══════════════════════════════════════════════════════════════════════════
-  async runAutonomous(goal, maxSteps = 20) {
+  async runAutonomous(goal, maxSteps = 30) {
+    const { TaskPlanner } = await import('./planner.js');
+    const planner = new TaskPlanner(this.brain);
+
     console.log(boxen(
-      chalk.bold.cyan(`🤖 自主模式\n\n`) + chalk.white(`目標: ${goal}`),
+      chalk.bold.cyan(`🤖 自主任務模式啟動\n\n`) + chalk.white(`目標: ${goal}`),
       { padding: 1, borderColor: 'cyan', borderStyle: 'double' }
     ));
 
-    this.isRunning = true;
-    let step = 0, task = goal;
-    const done = [];
+    const plan = await planner.createPlan(goal);
+    if (!plan || plan.length === 0) {
+      console.log(chalk.red('❌ 無法生成計畫，終止任務'));
+      return;
+    }
 
-    while (this.isRunning && step < maxSteps) {
-      step++;
-      console.log(chalk.dim(`\n${'─'.repeat(48)} 步驟 ${step}/${maxSteps}`));
-      const sp = ora(chalk.cyan('分析...')).start();
+    console.log(chalk.bold.yellow('\n📋 執行計畫：'));
+    plan.forEach(s => console.log(chalk.dim(`  [${s.id}] ${s.title}`)));
+
+    this.isRunning = true;
+    let stepCount = 0;
+
+    while (this.isRunning && !planner.isFinished() && stepCount < maxSteps) {
+      stepCount++;
+      const task = planner.getCurrentTask();
+      
+      console.log(chalk.bold.blue(`\n${'═'.repeat(10)} 步驟 ${planner.currentStepIndex + 1}/${planner.plan.length} : ${task.title} ${'═'.repeat(10)}`));
+      console.log(chalk.dim(`任務描述: ${task.description}`));
+
+      const sp = ora(chalk.cyan('思考中...')).start();
       try {
-        const thought = await this.brain.think(task, {
-          ...(await this._ctx()), autonomousMode: true,
-          originalGoal: goal, step, maxSteps, completedActions: done.slice(-5)
+        // 將計畫背景傳遞給 Brain
+        const thought = await this.brain.think(task.description, {
+          ...(await this._ctx()),
+          autonomousMode: true,
+          originalGoal: goal,
+          currentPlan: planner.plan,
+          currentStep: task
         });
         sp.stop();
         this._showThinking(thought);
@@ -186,32 +205,30 @@ export class GolemAgent {
         const result = await this.executor.execute(thought.action);
         if (result.output) this._showResponse(thought.response, result);
 
-        done.push({ step, action: thought.action.type, summary: thought.response?.substring(0,100) });
+        // 告知 Planner 完成情況，以便決定下一步（或自動調整計畫）
+        await planner.nextStep({ response: thought.response, action: thought.action?.type, output: result.output });
 
         if (thought.failureDetected) {
-          await this.brain.evolution.recordFailure(thought.action.type, thought.failureDetected, goal);
+          this.logger.warn(`偵測到失敗: ${thought.failureDetected}`);
         }
 
-        if (await this._goalMet(goal, done, thought)) {
-          console.log(boxen(chalk.bold.green('✅ 目標達成！\n') + chalk.white(thought.response),
-            { padding: 1, borderColor: 'green' }));
-          break;
-        }
-
-        task = thought.nextActions?.length
-          ? `繼續：${thought.nextActions[0]}。目標：${goal}`
-          : `回顧並繼續。目標：${goal}`;
-
-        await this._sleep(800);
+        await this._sleep(1000);
       } catch (e) {
-        sp.fail(chalk.red(`步驟 ${step} 失敗`));
-        await this.brain.evolution.recordFailure('autonomous_step', e.message, goal);
-        task = `錯誤：${e.message}。嘗試別的方法。目標：${goal}`;
+        sp.fail(chalk.red(`步驟執行錯誤`));
+        this.logger.error(`步驟錯誤: ${e.message}`);
+        await this._sleep(2000);
       }
     }
 
     this.isRunning = false;
-    console.log(chalk.dim('\n🏁 自主模式結束'));
+    const summary = planner.getExecutionSummary();
+    console.log(boxen(
+      chalk.bold.green('🏁 任務完成摘要\n\n') +
+      chalk.white(`目標：${summary.goal}\n`) +
+      chalk.white(`完成：${summary.completedSteps}/${summary.totalSteps} 步驟\n`) +
+      chalk.white(`進度：${summary.progress}`),
+      { padding: 1, borderColor: 'green' }
+    ));
   }
 
   async buildProject(desc) {
