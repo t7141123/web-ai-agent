@@ -1,24 +1,40 @@
-// core/agent.js  (v6)
+// core/agent.js  (v7 — 品質回饋迴路)
 import chalk   from 'chalk';
 import boxen   from 'boxen';
 import ora     from 'ora';
-import { Brain }    from './brain.js';
-import { Executor } from './executor.js';
-import { Logger }   from './logger.js';
+import { Brain }          from './brain.js';
+import { Executor }       from './executor.js';
+import { Logger }         from './logger.js';
+import { PromptEvolver }  from './prompt-evolver.js';
 
 export class GolemAgent {
   constructor(apiKey) {
-    this.brain     = new Brain(apiKey);
-    this.executor  = new Executor(this.brain.memory);
-    this.logger    = new Logger('Agent');
-    this.isRunning = false;
-    this.name      = process.env.AGENT_NAME || 'Golem';
+    this.brain         = new Brain(apiKey);
+    this.executor      = new Executor(this.brain.memory);
+    this.promptEvolver = new PromptEvolver();
+    this.logger        = new Logger('Agent');
+    this.isRunning     = false;
+    this.name          = process.env.AGENT_NAME || 'Golem';
+    this._lastResponse = null; // 追蹤上一次回應，用於推測滿意度
   }
 
   // ══════════════════════════════════════════════════════════════════════════
   //  一般對話
   // ══════════════════════════════════════════════════════════════════════════
   async chat(userInput) {
+    // 🔄 品質回饋迴路：從本次輸入推測對上次回應的滿意度
+    if (this._lastResponse) {
+      const inference = this.promptEvolver.inferSatisfaction(userInput, this._lastResponse);
+      if (inference) {
+        await this.promptEvolver.recordFeedback({
+          satisfied: inference.satisfied,
+          signal: inference.signal,
+          confidence: inference.confidence,
+          userInput: userInput.substring(0, 100),
+        }).catch(() => {});
+      }
+    }
+
     const sp = ora({ text: chalk.cyan('思考中...'), color: 'cyan' }).start();
     try {
       const thought = await this.brain.think(userInput, await this._ctx());
@@ -38,6 +54,9 @@ export class GolemAgent {
       // 如果偵測到失敗，提示
       if (thought.failureDetected)
         console.log(chalk.yellow(`\n  ⚠️  失敗已記錄，將在下次進化週期中分析`));
+
+      // 記錄本次回應，供下次對話推測滿意度
+      this._lastResponse = thought.response || '';
 
       return { thought, result };
     } catch (e) {
