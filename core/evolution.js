@@ -678,6 +678,143 @@ ${interaction.userInput ? `用戶問：${interaction.userInput.substring(0, 100)
       all.map(i => `  • ${String(i).substring(0, 100)}`).join('\n') + '\n';
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  //  即時學習：對話結束後觸發的輕量學習（from evolution-engine.js）
+  // ══════════════════════════════════════════════════════════════════════════
+  async learnFromInteraction(userInput, agentResponse, outcome) {
+    const { success, skillsUsed = [], errorMsg = '' } = outcome;
+
+    // 如果有技能系統引用，更新技能回饋
+    if (this._skillsRef) {
+      for (const skillId of skillsUsed) {
+        if (success) await this._skillsRef.recordSuccess(skillId, userInput.substring(0, 60));
+        else         await this._skillsRef.recordFailure(skillId, errorMsg);
+      }
+    }
+
+    // 追蹤互動次數
+    const evolution = await this._load(EVOLUTION_FILE);
+    evolution._interactionCount = (evolution._interactionCount || 0) + 1;
+    await fs.writeJSON(EVOLUTION_FILE, evolution, { spaces: 2 });
+
+    // 每 8 次對話自動觸發一次進化週期（非阻塞）
+    if (evolution._interactionCount % 8 === 0) {
+      setImmediate(() => this.runCycle([], this._skillsRef).catch(() => {}));
+    }
+  }
+
+  // 設定技能系統引用（由 brain.js 在初始化時呼叫）
+  setSkillsRef(skillsSystem) { this._skillsRef = skillsSystem; }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  修訂失效技能（from evolution-engine.js）
+  // ══════════════════════════════════════════════════════════════════════════
+  async reviseWeakSkills(skillsSystem) {
+    const skills = skillsSystem || this._skillsRef;
+    if (!skills) return [];
+    const allSkills  = await skills.getAll();
+    const weakSkills = allSkills.filter(s => s.status === 'needs_revision').slice(0, 2);
+    const events     = [];
+
+    for (const skill of weakSkills) {
+      this.logger.info(`🔧 修訂技能：${skill.name}`);
+      const failReasons = (skill.failures || []).map(f => f.reason).join('; ') || '不明原因';
+
+      const prompt = `請重新設計以下技能的策略。
+
+技能名稱：${skill.name}
+當前策略：${skill.strategy || skill.description}
+失敗原因：${failReasons}
+失敗次數：${skill.failCount}，成功次數：${skill.successCount}
+
+請提出更好的策略，避免之前的失敗模式。
+
+輸出格式（純 JSON）：
+{
+  "revised_strategy": "改進後的策略（具體步驟）",
+  "improvement": "相比之前策略，改進了什麼",
+  "confidence": 0.65
+}`;
+
+      try {
+        const result = await this.router.route(prompt, '');
+        if (!result.success) continue;
+        const parsed = this._parseJSON(result.response);
+        if (!parsed?.revised_strategy) continue;
+
+        await skills.upgradeSkill(skill.id, {
+          strategy:    parsed.revised_strategy,
+          confidence:  parsed.confidence || 0.6,
+          strengthLevel: parsed.confidence || 0.6,
+          status:      'active',
+          failCount:   0,
+        });
+
+        events.push({ type: 'skill_revision', skillName: skill.name, improvement: parsed.improvement, at: Date.now() });
+        this.logger.info(`✅ 技能修訂完成：${skill.name}`);
+      } catch (e) {
+        this.logger.warn(`技能修訂失敗 (${skill.name}): ${e.message}`);
+      }
+    }
+    return events;
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  從記憶中自動提煉技能（from evolution-engine.js）
+  // ══════════════════════════════════════════════════════════════════════════
+  async extractSkillsFromMemory(memorySystem, skillsSystem) {
+    const memory = memorySystem;
+    const skills = skillsSystem || this._skillsRef;
+    if (!memory || !skills) return [];
+
+    const recentMems = await memory.getByType('learning', 15);
+    if (recentMems.length < 3) return [];
+
+    const memSummary = recentMems.map(m => `- ${m.content}`).join('\n').substring(0, 1500);
+
+    const prompt = `分析以下學習記錄，識別其中可以提煉為通用技能的模式。
+只提取真正有價值、可重用的技能（0-2個），不要過度提煉。
+
+學習記錄：
+${memSummary}
+
+輸出格式（純 JSON）：
+{
+  "skills": [
+    {
+      "name": "技能名稱",
+      "category": "領域",
+      "description": "解決什麼問題",
+      "strategy": "操作步驟",
+      "tags": [],
+      "confidence": 0.6,
+      "worth_extracting": true
+    }
+  ],
+  "pattern_found": "發現了什麼共同模式"
+}`;
+
+    try {
+      const result = await this.router.route(prompt, '');
+      if (!result.success) return [];
+      const parsed   = this._parseJSON(result.response);
+      const toAdd    = (parsed?.skills || []).filter(s => s.worth_extracting);
+      const events   = [];
+
+      for (const s of toAdd) {
+        await skills.addSkill({ ...s, source: 'memory_extraction' });
+        events.push({ type: 'skill_extracted', skillName: s.name, at: Date.now() });
+        this.logger.info(`🎯 從記憶提煉技能：${s.name}`);
+      }
+
+      if (parsed?.pattern_found) {
+        await memory.store({ type: 'evolution', content: `記憶模式識別：${parsed.pattern_found}`, importance: 0.75 });
+      }
+      return events;
+    } catch { return []; }
+  }
+
+  // ── 工具方法 ──────────────────────────────────────────────────────────────
   async _load(file) {
     return fs.readJSON(file).catch(() => ({}));
   }

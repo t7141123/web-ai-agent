@@ -54,11 +54,14 @@ export class Brain {
     this.evolution = new EvolutionEngine(this.router);
     this.logger    = new Logger('Brain');
 
+    // 讓進化引擎可以直接操作技能系統
+    this.evolution.setSkillsRef(this.skills);
+
     this.iteration        = 0;
     this.microEvolveEvery = parseInt(process.env.MICRO_EVOLVE_EVERY) || 3;
     this.fullEvolveEvery  = parseInt(process.env.FULL_EVOLVE_EVERY)  || 25;
 
-    this.logger.info('🧠 Brain v6 — 真實進化版');
+    this.logger.info('🧠 Brain v7 — 統一進化版');
   }
 
   async think(userInput, context = {}) {
@@ -128,6 +131,13 @@ export class Brain {
     try {
       const mems = await this.memory.getRecent(30);
       await this.evolution.runCycle(mems, this.skills);
+
+      // 修訂失效技能
+      await this.evolution.reviseWeakSkills(this.skills);
+
+      // 從記憶中提煉新技能
+      await this.evolution.extractSkillsFromMemory(this.memory, this.skills);
+
       this.logger.info('🧬 背景進化完成');
     } catch (e) {
       this.logger.warn(`背景進化失敗: ${e.message}`);
