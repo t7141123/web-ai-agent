@@ -149,11 +149,19 @@ export class SelectorDiscovery {
   constructor(apiKey) {
     this.logger = new Logger("SelectorDiscovery");
     this.cache = null;
-    this.genAI = apiKey ? new GoogleGenerativeAI(apiKey) : null;
-    this.model = this.genAI?.getGenerativeModel({
-      model: process.env.GEMINI_MODEL || "gemini-2.0-flash",
-      generationConfig: { temperature: 0.1, maxOutputTokens: 1024 },
-    });
+    
+    // 🧬 如果沒有 API Key，完全不初始化 AI（避免配額錯誤）
+    if (apiKey) {
+      this.genAI = new GoogleGenerativeAI(apiKey);
+      this.model = this.genAI?.getGenerativeModel({
+        model: process.env.GEMINI_MODEL || "gemini-2.0-flash",
+        generationConfig: { temperature: 0.1, maxOutputTokens: 1024 },
+      });
+    } else {
+      this.genAI = null;
+      this.model = null;
+      this.logger.info('ℹ️  無 API Key，將不使用 AI 推理偵測 selector');
+    }
   }
 
   // ── 主入口：取得指定元素的有效 selector ──────────────────────────────────
@@ -332,6 +340,12 @@ export class SelectorDiscovery {
 
   // ── 策略 3：Flash API 視覺推理 ───────────────────────────────────────────
   async _aiInference(page, elementType) {
+    // 🧬 如果沒有初始化 model，直接跳過（避免配額錯誤）
+    if (!this.model) {
+      this.logger.debug('ℹ️  無 AI 模型，跳過 AI 推理');
+      return null;
+    }
+
     this.logger.info(`🤖 使用 Flash API 推理 selector: ${elementType}`);
 
     try {

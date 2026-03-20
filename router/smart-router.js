@@ -5,12 +5,15 @@
 //   Flash API  → 快速、簡單任務、指令解析、結構化輸出
 //   Gemini Web → 複雜推理、長文生成、程式碼、需要最新知識
 //   + 額度管理 → API 額度不足時自動降級到 Web
+//
+// 🧬 FORCE_WEB_MODE = true 時，所有請求強制走 Gemini Web（完全不使用 API）
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { GeminiWebClient } from '../browser/gemini-web.js';
 import { QuotaManager } from '../core/quota-manager.js';
 import { Logger } from '../core/logger.js';
 
+const FORCE_WEB_MODE     = process.env.FORCE_WEB_MODE === 'true';
 const COMPLEXITY_THRESHOLD = parseFloat(process.env.COMPLEXITY_THRESHOLD) || 0.6;
 const TOKEN_LIMIT          = parseInt(process.env.ROUTER_TOKEN_LIMIT) || 800;
 
@@ -45,16 +48,24 @@ const COMPLEXITY_RULES = {
 export class SmartRouter {
   constructor(apiKey) {
     this.logger       = new Logger('Router');
-    this.genAI        = new GoogleGenerativeAI(apiKey);
     this.webClient    = null;
     this.quotaManager = new QuotaManager();
-    this.apiClient    = this.genAI.getGenerativeModel({
-      model: process.env.GEMINI_MODEL || 'gemini-2.0-flash',
-      generationConfig: { temperature: 0.3, maxOutputTokens: 4096 }
-    });
-
     this.apiKey = apiKey;
     this.stats = { apiCalls: 0, webCalls: 0, totalSaved: 0 };
+
+    // 🧬 如果有 API Key，才初始化 API 客戶端
+    if (apiKey && apiKey.trim()) {
+      this.genAI = new GoogleGenerativeAI(apiKey);
+      this.apiClient = this.genAI.getGenerativeModel({
+        model: process.env.GEMINI_MODEL || 'gemini-2.0-flash',
+        generationConfig: { temperature: 0.3, maxOutputTokens: 4096 }
+      });
+      this.logger.info('📡 Flash API 已就緒');
+    } else {
+      this.genAI = null;
+      this.apiClient = null;
+      this.logger.info('ℹ️  無 API Key，將僅使用 Gemini Web');
+    }
   }
 
   // ── 主路由入口 ────────────────────────────────────────────────────────────
@@ -72,6 +83,26 @@ export class SmartRouter {
   // ── 複雜度評估，決定路由 ─────────────────────────────────────────────────
   _decide(prompt) {
     const tokenEstimate = Math.ceil(prompt.length / 3);
+
+    // 🧬 FORCE_WEB_MODE：強制所有請求走 Web
+    if (FORCE_WEB_MODE) {
+      return {
+        route: 'web',
+        score: 1.0,
+        reason: 'FORCE_WEB_MODE 啟用，使用 Gemini Web',
+        tokens: tokenEstimate
+      };
+    }
+
+    // 🧬 如果沒有 API，直接返回 Web
+    if (!this.apiClient) {
+      return {
+        route: 'web',
+        score: 1.0,
+        reason: '無 API Key，使用 Gemini Web',
+        tokens: tokenEstimate
+      };
+    }
 
     // 🔴 額度管理：API 額度不足時強制走 Web
     if (!this.quotaManager.canCallAPI()) {
@@ -134,6 +165,12 @@ export class SmartRouter {
 
   // ── 呼叫 Flash API（含額度管理與自動重試）──────────────────────────────
   async _callAPI(prompt, systemContext, decision) {
+    // 🧬 如果沒有 API 客戶端，直接降級到 Web
+    if (!this.apiClient) {
+      this.logger.info('ℹ️  無 API，直接降級到 Web');
+      return this._callWeb(prompt, systemContext, { ...decision, route: 'web', reason: '無 API Key' });
+    }
+
     this.stats.apiCalls++;
     const startTime = Date.now();
 

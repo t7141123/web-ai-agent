@@ -324,6 +324,14 @@ export class GolemAgent {
   stop()     { this.isRunning = false; }
   async shutdown() {
     this.isRunning = false;
+    // 關閉監控系統
+    if (this.brain.selfMonitor) {
+      await this.brain.selfMonitor.shutdown();
+    }
+    // 關閉自我進化系統
+    if (this.brain.selfEvolution) {
+      await this.brain.selfEvolution.shutdown();
+    }
     await this.brain.shutdown();
   }
 }

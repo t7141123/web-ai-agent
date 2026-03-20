@@ -1,11 +1,14 @@
-// core/brain.js  (v6 — 進化洞見 + 失敗記錄 + 技能步驟全注入)
+// core/brain.js  (v7 — 真實自我進化版)
 
-import { SmartRouter }     from '../router/smart-router.js';
-import { MemorySystem }    from './memory.js';
-import { SkillsSystem }    from './skills.js';
-import { EvolutionEngine } from './evolution.js';
-import { PromptEvolver }   from './prompt-evolver.js';
-import { Logger }          from './logger.js';
+import { SmartRouter }       from '../router/smart-router.js';
+import { MemorySystem }      from './memory.js';
+import { SkillsSystem }      from './skills.js';
+import { EvolutionEngine }   from './evolution.js';
+import { PromptEvolver }     from './prompt-evolver.js';
+import { SelfEvolutionCore } from './self-evolution.js';
+import { SelfMonitor }       from './self-monitor.js';
+import { Logger }            from './logger.js';
+import { DECISION_TYPES, EXPERIMENT_TYPES } from './self-evolution.js';
 
 export class Brain {
   constructor(apiKey) {
@@ -14,6 +17,8 @@ export class Brain {
     this.skills        = new SkillsSystem();
     this.evolution     = new EvolutionEngine(this.router);
     this.promptEvolver = new PromptEvolver(this.router);
+    this.selfEvolution = new SelfEvolutionCore(this);
+    this.selfMonitor   = new SelfMonitor(this);
     this.logger        = new Logger('Brain');
 
     // 讓進化引擎可以直接操作技能系統
@@ -23,7 +28,7 @@ export class Brain {
     this.microEvolveEvery = parseInt(process.env.MICRO_EVOLVE_EVERY) || 3;
     this.fullEvolveEvery  = parseInt(process.env.FULL_EVOLVE_EVERY)  || 25;
 
-    this.logger.info('🧠 Brain v7 — 統一進化版');
+    this.logger.info('🧠 Brain v7 — 真實自我進化版');
   }
 
   async think(userInput, context = {}) {
@@ -49,6 +54,17 @@ export class Brain {
     thought._source    = route.source;
     thought._elapsed   = route.elapsed;
     thought._userInput = userInput;
+
+    // 🧬 追蹤路由決策
+    await this.selfEvolution.trackDecision(DECISION_TYPES.ROUTE_CHOICE, {
+      route: route.source,
+      complexityScore: route.decision?.score,
+      reason: route.decision?.reason,
+      confidence: thought.confidence,
+    }, {
+      success: route.success,
+      elapsed: route.elapsed,
+    });
 
     // 記憶學習
     if (thought.learned) {
@@ -76,21 +92,21 @@ export class Brain {
   // 新增：處理執行結果，更新技能強度
   async processOutcome(thought, result) {
     const isSuccess = result?.success !== false && !result?.error;
-    
+
     // 將執行結果和使用的技能關聯起來
     const skillsApplied = thought.thinking?.skillsApplied || [];
-    
+
     if (skillsApplied.length > 0) {
       // 在本地快取找到對應 ID
       const allSkills = await this.skills.getAll();
       for (const skillName of skillsApplied) {
         // 模糊比對名稱或 ID
-        const matched = allSkills.find(s => 
-          s.id === skillName || 
-          s.name.includes(skillName) || 
+        const matched = allSkills.find(s =>
+          s.id === skillName ||
+          s.name.includes(skillName) ||
           skillName.includes(s.name)
         );
-        
+
         if (matched) {
           if (isSuccess && !thought.failureDetected) {
             await this.skills.recordSuccess(matched.id, thought._userInput?.substring(0, 60));
@@ -100,7 +116,41 @@ export class Brain {
           }
         }
       }
+
+      // 🧬 追蹤技能應用決策
+      await this.selfEvolution.trackDecision(DECISION_TYPES.SKILL_APPLICATION, {
+        skillsApplied,
+        taskType: thought.action?.type,
+        confidence: thought.confidence,
+      }, {
+        success: isSuccess,
+        confidence: thought.confidence,
+      });
     }
+
+    // 🧬 追蹤動作選擇決策
+    await this.selfEvolution.trackDecision(DECISION_TYPES.ACTION_SELECTION, {
+      actionType: thought.action?.type,
+      alternatives: [], // 可以擴充記錄其他考慮過的選項
+      confidence: thought.confidence,
+    }, {
+      success: isSuccess,
+      output: result?.output?.substring(0, 100),
+    });
+
+    // 🧬 將執行結果回饋給自我進化系統
+    await this.evolution.learnFromInteraction(
+      thought._userInput,
+      thought.response,
+      {
+        success: isSuccess,
+        skillsUsed: skillsApplied.map(s => s.id || s),
+        errorMsg: result?.error || thought.failureDetected,
+      }
+    );
+
+    // 👁️ 自我監控追蹤
+    await this.selfMonitor.trackInteraction(thought._userInput, thought, result);
   }
 
   async _scheduleEvolution(thought) {

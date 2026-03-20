@@ -31,8 +31,7 @@ const BLOCKER = {
     '[class*="blocked"]',
     '[class*="captcha"]',
     'button:has-text("Sign in")',
-    // 🧬 移除登入按鈕，因為這不影響使用
-    // 'button:has-text("登入")',
+    'button:has-text("登入")',
   ],
   bodyText: [
     "Something went wrong",
@@ -72,30 +71,6 @@ const DISMISS = [
   'button[aria-label*="dismiss" i]',
   'button[aria-label*="close" i]',
   '.dismiss-button',
-  // 🧬 模型選擇/歡迎畫面相關
-  'button:has-text("Start chatting")',
-  'button:has-text("開始聊天")',
-  'button:has-text("Send")',
-  'button:has-text("傳送")',
-  'button:has-text("Try it")',
-  'button:has-text("試試看")',
-  'button:has-text("Get started")',
-  'button:has-text("開始使用")',
-  'button:has-text("I agree")',
-  'button:has-text("我同意")',
-  'button:has-text("Allow")',
-  'button:has-text("允許")',
-  'button:has-text("OK")',
-  'button:has-text("確定")',
-  'button[jsname*="submit"]',
-  'button[aria-label*="send" i]',
-  'button[aria-label*="傳送" i]',
-  // 🧬 關閉彈窗和遮罩
-  '[role="dialog"] button:first-child',
-  '.modal-close',
-  '.popup-close',
-  '[class*="close"]',
-  '[class*="dismiss"]',
 ];
 
 const BROWSER_ARGS = [
@@ -200,31 +175,11 @@ export class GeminiWebClient {
     this.logger.info(`📤 [Tab#${this.tabSeq}] 發送 (${prompt.length} 字元)...`);
 
     try {
-      // 🧬 先嘗試關閉干擾元素
-      await this._dismissAll();
-      await this.page.waitForTimeout(500);
-
-      // 🧬 只檢查致命阻擋（quota/limit/error），登入提示直接忽略
       const blocked = await this._detectBlock();
-      if (blocked && (blocked.includes('quota') || blocked.includes('limit') || blocked.includes('error'))) {
-        this.logger.warn(`⚠️  偵測到致命阻擋 (${blocked})`);
-        const recovered = await this._recoverFromBlock(blocked);
-        if (recovered === true) {
-          this.logger.info('✅ 恢復成功，重試發送...');
-          return this.sendMessage(prompt, { ...opts, _retry: _retry + 1 });
-        } else if (recovered === 'continue') {
-          this.logger.info('ℹ️  可以繼續執行');
-          // 直接繼續，不重試
-        } else {
-          return { success: false, error: `無法從阻擋中恢復：${blocked}`, response: '' };
-        }
-      }
-
-      if (blocked && blocked.includes('登入')) {
-        this.logger.info('ℹ️  偵測到登入提示，但嘗試直接發送...');
-        // 嘗試關閉干擾
-        await this._dismissAll();
-        await this.page.waitForTimeout(2000);
+      if (blocked) {
+        this.logger.warn(`⚠️  偵測到阻擋 (${blocked})，換新分頁...`);
+        await this._rotateTab();
+        return this.sendMessage(prompt, { ...opts, _retry: _retry + 1 });
       }
 
       const inputSel = await this._resolveSelector('input');
@@ -240,27 +195,7 @@ export class GeminiWebClient {
       await inputEl.pressSequentially(prompt, { delay: 8 });
       await this.page.waitForTimeout(350);
 
-      // 🧬 直接按下 Enter 發送，不依賴 send button selector
-      await this.page.keyboard.press('Enter');
-      await this.page.waitForTimeout(500);
-
-      // 🧬 發送後再檢查是否有致命阻擋（quota/limit/error），登入提示直接忽略
-      const blockedAfterSend = await this._detectBlock();
-      if (blockedAfterSend && (blockedAfterSend.includes('quota') || blockedAfterSend.includes('limit') || blockedAfterSend.includes('error'))) {
-        this.logger.warn(`⚠️  回應中偵測到致命阻擋 (${blockedAfterSend})`);
-        const recovered = await this._recoverFromBlock(blockedAfterSend);
-        if (recovered === true) {
-          this.logger.info('✅ 恢復成功，重試發送...');
-          return this.sendMessage(prompt, { ...opts, _retry: _retry + 1 });
-        } else if (recovered === 'continue') {
-          this.logger.info('ℹ️  可以繼續執行');
-          // 直接繼續，不重試
-        } else {
-          return { success: false, error: `無法從阻擋中恢復：${blockedAfterSend}`, response: '' };
-        }
-      }
-
-      // 登入提示不影響等待回覆
+      await this._clickSend();
 
       const response = await this._waitForResponse(timeout);
       if (!response) throw new Error('收到空回應');
@@ -316,61 +251,28 @@ export class GeminiWebClient {
     try {
       await page.goto(GEMINI_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
       // 等待較久讓 JS bundle 載入（Gemini 是 SPA，domcontentloaded 不夠）
-      await page.waitForTimeout(5000);
+      await page.waitForTimeout(3000);
 
-      // 🧬 多次關閉干擾 UI，確保所有彈窗都被關閉
-      await this._dismissAll(page);
-      await page.waitForTimeout(1000);
-      await this._dismissAll(page);
-      await page.waitForTimeout(1000);
+      // 關閉干擾 UI
       await this._dismissAll(page);
       await page.waitForTimeout(500);
 
-      // 🧬 如果在阻擋頁，只處理致命阻擋（quota/limit/error），登入提示直接忽略
+      // 如果在阻擋頁，先處理
       const blocked = await this._detectBlock(page);
-      if (blocked && (blocked.includes('quota') || blocked.includes('limit') || blocked.includes('error'))) {
-        this.logger.warn(`#${seq} 致命阻擋 (${blocked})，跳回首頁...`);
+      if (blocked) {
+        this.logger.warn(`#${seq} 阻擋 (${blocked})，跳回首頁...`);
         await page.goto(GEMINI_URL, { waitUntil: 'domcontentloaded', timeout: 20000 });
-        await page.waitForTimeout(4000);
+        await page.waitForTimeout(2500);
         await this._dismissAll(page);
-        await page.waitForTimeout(1000);
-        await this._dismissAll(page);
-        await page.waitForTimeout(1000);
-      } else if (blocked && blocked.includes('登入')) {
-        this.logger.info(`#${seq} 偵測到登入提示，但繼續執行...`);
-        await this._dismissAll(page);
-        await page.waitForTimeout(2000);
       }
 
       // ── 等待輸入框出現，最多重試 3 次，每次多等 3 秒 ──────────────────────
       let sel = {};
       for (let attempt = 1; attempt <= 3; attempt++) {
         this.logger.info(`🔍 偵測 #${seq} selector（第 ${attempt}/3 次）...`);
+        sel = await this.discovery.discoverAll(page);
 
-        // 每次偵測前都嘗試關閉干擾
-        await this._dismissAll(page);
-        await page.waitForTimeout(500);
-
-        // 🧬 如果沒有 API，直接使用硬編碼 selector（跳過 AI 偵測）
-        if (!this.discovery.model) {
-          this.logger.info('ℹ️  無 API，使用硬編碼 selector');
-          sel.input = 'div[contenteditable="true"][role="textbox"]';
-          sel.sendButton = 'button[aria-label*="Send" i]';
-          sel.responseBlock = 'div[data-message-role="model"]';
-          sel.responseText = '.markdown-content';
-          sel.loadingIndicator = 'mat-progress-bar';
-          sel.newChatButton = 'a[href="/"]';
-          
-          // 驗證輸入框是否存在
-          const inputExists = await page.locator(sel.input).count().catch(() => 0);
-          if (inputExists > 0) {
-            this.logger.info('✅ 找到輸入框');
-            break;
-          }
-        } else {
-          sel = await this.discovery.discoverAll(page);
-          if (sel.input) break;  // 找到了就不再等
-        }
+        if (sel.input) break;  // 找到了就不再等
 
         if (attempt < 3) {
           this.logger.warn(`#${seq} 第 ${attempt} 次找不到輸入框，等待 3 秒後再試...`);
@@ -379,16 +281,12 @@ export class GeminiWebClient {
         }
       }
 
-      // 🧬 如果 3 次都找不到 input，使用硬編碼的默認 selector（避免 API 配額用盡時無法使用）
       if (!sel.input) {
-        this.logger.warn(`#${seq} 3 次偵測均找不到輸入框，使用默認 selector`);
-        sel.input = 'div.ql-editor[contenteditable="true"]';
-        sel.sendButton = 'button.send-button';
-        sel.responseBlock = 'model-response';
-        sel.responseText = 'model-response .markdown';
-        sel.loadingIndicator = 'mat-progress-bar, mat-progress-spinner';
-        sel.newChatButton = 'a[href="/"]';
-        this.logger.info(`⚠️  使用硬編碼 selector，可能不準確`);
+        // 3 次都失敗才真的放棄，但不關分頁讓用戶看看是什麼狀況
+        this.logger.warn(`#${seq} 3 次偵測均找不到輸入框，放棄此分頁`);
+        await page.close().catch(() => {});
+        this.tabSeq--;
+        return false;
       }
 
       this.page = page;
@@ -422,19 +320,14 @@ export class GeminiWebClient {
       const text = await page.evaluate(
         () => document.body?.innerText?.slice(0, 2000) || ''
       ).catch(() => '');
-      
-      // 🧬 檢查致命阻擋文字（排除登入提示）
-      for (const sig of BLOCKER.bodyText) {
-        // 跳過登入相關文字，因為這不影響使用
-        if (sig === '登入' || sig === 'Please sign in') continue;
+      for (const sig of BLOCKER.bodyText)
         if (text.includes(sig)) return `text:${sig}`;
-      }
 
       // 🧬 新增：檢查頁面是否完全空白或只有錯誤訊息
       const pageContent = await page.evaluate(() => {
         const body = document.body;
         const hasContent = body.children.length > 2;
-        const hasOnlyError = body.innerText?.length < 200 &&
+        const hasOnlyError = body.innerText?.length < 200 && 
           /error|blocked|wrong|limit/i.test(body.innerText);
         return { hasContent, hasOnlyError };
       }).catch(() => ({ hasContent: false, hasOnlyError: false }));
@@ -451,18 +344,15 @@ export class GeminiWebClient {
 
     this.logger.info(`🔄 嘗試從阻擋中恢復：${blockType}`);
 
-    // 🧬 如果是登入提示，嘗試關閉干擾元素並等待，然後返回 'continue' 表示可以直接繼續
+    // 策略 1：如果是登入提示，嘗試點擊「繼續作為訪客」
     if (blockType?.includes('signin') || blockType?.includes('登入')) {
-      this.logger.info('ℹ️  偵測到登入提示，嘗試關閉干擾...');
       await this._dismissAll();
-      await this.page.waitForTimeout(3000);
-      
-      // 再次嘗試關閉
-      await this._dismissAll();
-      await this.page.waitForTimeout(2000);
-      
-      this.logger.info('ℹ️  登入提示可能仍然存在，但通常不影響使用，繼續執行...');
-      return 'continue';  // 返回特殊值表示可以直接繼續，不需要重試
+      const guestBtn = this.page.locator('button:has-text("Continue as guest"), button:has-text("以訪客繼續")').first();
+      if (await guestBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
+        await guestBtn.click();
+        await this.page.waitForTimeout(2000);
+        return true;
+      }
     }
 
     // 策略 2：如果是 quota 或 limit，換新分頁
@@ -481,13 +371,11 @@ export class GeminiWebClient {
       return true;
     }
 
-    // 預設策略：嘗試關閉干擾並繼續
-    this.logger.info('🔄 預設恢復策略：關閉干擾並繼續');
-    await this._dismissAll();
-    await this.page.waitForTimeout(2000);
-    return 'continue';
+    // 預設策略：換分頁
+    this.logger.info('🔄 預設恢復策略：換新分頁');
+    await this._rotateTab();
+    return true;
   }
-  async _dismissAll(page = this.page) {
     for (const sel of DISMISS) {
       try {
         const el = page.locator(sel).first();
@@ -630,9 +518,19 @@ export class GeminiWebClient {
   }
 
   async _clickSend() {
-    // 🧬 簡化為直接按 Enter，不再依賴 send button selector
+    const s = this.sel.sendButton || 'button.send-button';
+    try {
+      const btn = this.page.locator(s).first();
+      if (await btn.isVisible({ timeout: 2000 })) {
+        await btn.click();
+        await this.page.waitForTimeout(500);
+        // 如果按鈕還是可見且沒有變成「停止」按鈕，可能沒點中或無反應，補一個 Enter
+        const stillVisible = await btn.isVisible({ timeout: 500 }).catch(() => false);
+        if (stillVisible) await this.page.keyboard.press('Enter');
+        return;
+      }
+    } catch {}
     await this.page.keyboard.press('Enter');
-    await this.page.waitForTimeout(300);
   }
 
   async _resetToHome() {

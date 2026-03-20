@@ -9,10 +9,13 @@
   },
   "scripts": {
     "start": "node index.js",
+    "start:simple": "node index-simple.js",
     "setup": "node setup/install.js",
     "dev": "node --watch index.js",
-    "test": "node scripts/login.js",
-    "login": "node scripts/login.js",
+    "dev:simple": "node --watch index-simple.js",
+    "test": "scripts/login.js",
+    "test:simple": "node scripts/test-simple.js",
+    "login": "scripts/login.js",
     "lint": "eslint ."
   },
   "dependencies": {
@@ -22,6 +25,7 @@
     "dotenv": "^16.4.5",
     "fs-extra": "^11.2.0",
     "glob": "^11.0.0",
+    "node-telegram-bot-api": "^0.64.0",
     "ora": "^8.0.1",
     "playwright": "^1.44.0"
   },

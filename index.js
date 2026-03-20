@@ -40,6 +40,10 @@ function showHelp() {
         ['skills',       '查看技能庫（強度 + 觸發條件 + 執行步驟）'],
         ['questions',    '查看待答和已答的自我提問'],
         ['failures',     '查看失敗記錄和分析出的模式'],
+        ['insights',     '查看自我進化洞察（成功/失敗模式）'],
+        ['experiments',  '查看活躍實驗和結果'],
+        ['monitor',      '查看系統監控狀態和健康分數'],
+        ['report',       '生成並查看進化報告'],
       ]
     },
     {
@@ -75,15 +79,15 @@ function showHelp() {
 }
 
 function validateSetup() {
+  // 🧬 允許沒有 API Key，此時只使用 Gemini Web（訪客模式）
   if (!API_KEY || API_KEY === 'your_gemini_api_key_here') {
     console.log(boxen(
-      chalk.red.bold('❌ 缺少 Gemini API Key\n\n') +
-      chalk.yellow('1. 前往 https://aistudio.google.com/app/apikey\n') +
-      chalk.yellow('2. 取得免費 API Key\n') +
-      chalk.yellow('3. 填入 .env 的 GEMINI_API_KEY'),
-      { padding: 1, borderColor: 'red' }
+      chalk.yellow.bold('⚠️  未設置 Gemini API Key\n\n') +
+      chalk.dim('將僅使用 Gemini Web（訪客模式）\n') +
+      chalk.dim('某些功能可能受限，但基本對話可用'),
+      { padding: 1, borderColor: 'yellow' }
     ));
-    process.exit(1);
+    // 不退出，繼續執行
   }
 }
 
@@ -219,6 +223,127 @@ async function main() {
         data.failures.slice(0,5).forEach((f,i) =>
           console.log(chalk.dim(`  ${i+1}. ${f.task} → ${f.reason.substring(0,60)}`))
         );
+      }
+      return ask();
+    }
+
+    // 🧬 新增：自我進化洞察
+    if (text === 'insights' || text === '進化洞察') {
+      const sp = ora('讀取進化洞察...').start();
+      const [evoStatus, insights] = await Promise.all([
+        agent.brain.selfEvolution.getStatus(),
+        agent.brain.selfEvolution.getInsights()
+      ]);
+      sp.stop();
+
+      console.log(boxen(
+        chalk.bold('🧬 自我進化洞察\n\n') +
+        chalk.white(`總決策數：${chalk.cyan(evoStatus.totalDecisions)}\n`) +
+        chalk.white(`實驗總數：${chalk.cyan(evoStatus.totalExperiments)}\n`) +
+        chalk.white(`活躍實驗：${chalk.yellow(evoStatus.activeExperiments)}\n`) +
+        chalk.white(`成功模式：${chalk.green(evoStatus.successfulPatterns)}\n`) +
+        chalk.white(`失敗模式：${chalk.red(evoStatus.failedPatterns)}\n\n`) +
+        (insights.length ? chalk.bold('洞察：\n') + insights.map(i => 
+          `  ${i.type === 'success' ? '✅' : '💡'} ${i.insight?.substring(0, 80) || ''}` +
+          (i.improvement ? `\n     → ${i.improvement.substring(0, 60)}` : '')
+        ).join('\n') : chalk.dim('  暫無洞察，繼續互動以累積數據')),
+        { padding: 1, borderColor: 'magenta' }
+      ));
+      return ask();
+    }
+
+    // 🧪 新增：實驗狀態
+    if (text === 'experiments' || text === '實驗') {
+      const sp = ora('讀取實驗狀態...').start();
+      const status = await agent.brain.selfEvolution.getStatus();
+      sp.stop();
+
+      console.log(chalk.bold(`\n🧪 實驗狀態（${status.activeExperiments} 個活躍）\n`));
+      
+      if (status.recentExperiments?.length) {
+        status.recentExperiments.forEach((exp, i) => {
+          const bar = '█'.repeat(Math.round(exp.successRate / 20)) + '░'.repeat(5 - Math.round(exp.successRate / 20));
+          console.log(chalk.cyan(`  ${i+1}. [${exp.type}] ${exp.hypothesis.substring(0, 40)}...`));
+          console.log(chalk.dim(`     試驗 ${exp.trials} 次 | 成功率 ${bar} ${exp.successRate}%`));
+        });
+      } else {
+        console.log(chalk.dim('  暫無活躍實驗'));
+      }
+      
+      if (status.activeExperiments > 0) {
+        console.log(chalk.yellow('\n  💡 實驗會自動根據失敗模式生成，並在累積足夠數據後得出結論'));
+      }
+      return ask();
+    }
+
+    // 👁️ 新增：系統監控狀態
+    if (text === 'monitor' || text === '監控') {
+      const sp = ora('讀取監控狀態...').start();
+      const [monitorStatus, evoStatus] = await Promise.all([
+        agent.brain.selfMonitor.getStatus(),
+        agent.brain.selfEvolution.getStatus()
+      ]);
+      sp.stop();
+
+      const healthScore = agent.brain.selfMonitor._calculateHealthScore(
+        monitorStatus.todayStats,
+        { totalCycles: evoStatus.totalDecisions > 0 ? 1 : 0 }
+      );
+
+      const healthColor = healthScore >= 70 ? 'green' : healthScore >= 40 ? 'yellow' : 'red';
+      const healthBar = '█'.repeat(Math.round(healthScore / 10)) + '░'.repeat(10 - Math.round(healthScore / 10));
+
+      console.log(boxen(
+        chalk.bold('👁️  系統監控狀態\n\n') +
+        chalk.white(`運行時間：${chalk.cyan(monitorStatus.uptime)} 分鐘\n`) +
+        chalk.white(`總互動數：${chalk.cyan(monitorStatus.totalInteractions)}\n`) +
+        chalk.white(`今日互動：${chalk.cyan(monitorStatus.todayStats.interactions)}\n`) +
+        chalk.white(`成功率：${chalk.cyan(monitorStatus.todayStats.successes)}/${chalk.cyan(monitorStatus.todayStats.interactions)}\n`) +
+        chalk.white(`平均信心：${chalk.cyan(monitorStatus.todayStats.avgConfidence)}\n`) +
+        chalk.white(`路由分佈：API ${chalk.yellow(monitorStatus.todayStats.routes.api || 0)} | Web ${chalk.yellow(monitorStatus.todayStats.routes.web || 0)}\n\n`) +
+        chalk.bold[healthColor](`健康分數：${healthBar} ${healthScore}/100\n`) +
+        (monitorStatus.stagnationCount > 0
+          ? chalk.red(`\n⚠️  偵測到 ${monitorStatus.stagnationCount} 次停滯`)
+          : chalk.green('\n✅ 系統運行良好')) +
+        (monitorStatus.breakthroughCount > 0
+          ? chalk.green(`\n✨ 記錄了 ${monitorStatus.breakthroughCount} 次突破`)
+          : ''),
+        { padding: 1, borderColor: healthColor }
+      ));
+      return ask();
+    }
+
+    // 📊 新增：生成報告
+    if (text === 'report' || text === '報告') {
+      const sp = ora('生成報告中...').start();
+      try {
+        const report = await agent.brain.selfMonitor.generateReport('daily');
+        sp.stop();
+
+        console.log(boxen(
+          chalk.bold(`📊 進化報告 (${report.date})\n\n`) +
+          chalk.white(`健康分數：${chalk[report.healthScore >= 70 ? 'green' : 'yellow'](report.healthScore + '/100')}\n`) +
+          chalk.white(`今日互動：${chalk.cyan(report.summary.todayInteractions)}\n`) +
+          chalk.white(`成功率：${chalk.cyan(report.summary.successRate + '%')}\n`) +
+          chalk.white(`平均信心：${chalk.cyan(report.summary.avgConfidence)}\n`) +
+          chalk.white(`進化週期：${chalk.cyan(report.details.evolutionCycles)}\n`) +
+          chalk.white(`技能總數：${chalk.cyan(report.details.totalSkills)}\n`) +
+          chalk.white(`活躍實驗：${chalk.cyan(report.details.activeExperiments)}\n`) +
+          (report.recentBreakthroughs?.length
+            ? chalk.green('\n✨ 最近突破：\n') + report.recentBreakthroughs.map(b =>
+                `  • ${b.userInput.substring(0, 50)}... (信心：${(b.confidence * 100).toFixed(0)}%)`
+              ).join('\n')
+            : '') +
+          (report.stagnationDetected?.length
+            ? chalk.red('\n⚠️  停滯記錄：\n') + report.stagnationDetected.map(s =>
+                `  • ${s.date}: ${s.possibleCauses?.join('；') || '原因不明'}`
+              ).join('\n')
+            : ''),
+          { padding: 1, borderColor: report.healthScore >= 70 ? 'green' : 'yellow' }
+        ));
+      } catch (e) {
+        sp.fail('報告生成失敗');
+        console.log(chalk.red(`錯誤：${e.message}`));
       }
       return ask();
     }

@@ -97,7 +97,7 @@ export class PromptEvolver {
     else data.stats.unsatisfied++;
 
     await fs.writeJSON(FEEDBACK_FILE, data, { spaces: 2 });
-    
+
     // Check if we need to evolve the prompt based on recent negative feedback
     await this._checkAndEvolve(data.feedbacks);
   }
@@ -105,7 +105,7 @@ export class PromptEvolver {
   async _checkAndEvolve(feedbacks) {
     const recent = feedbacks.slice(0, 10);
     if (recent.length < 5) return;
-    
+
     const unsatisfiedCount = recent.filter(f => !f.satisfied).length;
     // 如果最近有 40% 的互動或超過 3 次是負面回饋，觸發優化
     if (unsatisfiedCount >= Math.max(3, recent.length * 0.4)) {
@@ -116,6 +116,89 @@ export class PromptEvolver {
       } finally {
         this._isEvolving = false;
       }
+    }
+    
+    // 🧬 新增：分析負面回饋的模式，自動觸發針對性優化
+    const negativePatterns = this._analyzeNegativePatterns(recent.filter(f => !f.satisfied));
+    if (negativePatterns.length > 0) {
+      await this._targetedOptimization(negativePatterns);
+    }
+  }
+
+  // 🧬 新增：分析負面回饋模式
+  _analyzeNegativePatterns(negativeFeedbacks) {
+    const patterns = {};
+    
+    for (const feedback of negativeFeedbacks) {
+      const signal = feedback.signal || 'unknown';
+      if (!patterns[signal]) {
+        patterns[signal] = { count: 0, examples: [] };
+      }
+      patterns[signal].count++;
+      patterns[signal].examples.push(feedback.userInput?.substring(0, 100));
+    }
+    
+    // 只回傳重複出現的模式（>= 2 次）
+    return Object.entries(patterns)
+      .filter(([_, data]) => data.count >= 2)
+      .map(([pattern, data]) => ({
+        pattern,
+        count: data.count,
+        examples: data.examples.slice(0, 3),
+      }));
+  }
+
+  // 🧬 新增：針對性優化
+  async _targetedOptimization(patterns) {
+    this.logger.info(`🎯 偵測到重複負面模式：${patterns.map(p => p.pattern).join(', ')}`);
+    
+    const currentPrompt = await this.getActivePrompt();
+    
+    const prompt = `你是 GOLEM 的提示詞優化專家。
+
+目前的基礎提示詞：
+\`\`\`text
+${currentPrompt}
+\`\`\`
+
+我們發現以下重複出現的負面回饋模式：
+${patterns.map(p => `
+模式：${p.pattern}
+發生次數：${p.count}
+範例用戶輸入：
+${p.examples.map(e => `- ${e}`).join('\n')}
+`).join('\n')}
+
+請針對這些模式提出**具體的改進方案**，修改提示詞中對應的部分。
+
+輸出 JSON：
+{
+  "analysis": "分析這些負面模式的根本原因",
+  "specificChanges": [
+    {"section": "要修改的部分", "reason": "為什麼要改", "newContent": "新內容"}
+  ],
+  "newPrompt": "完整的改進後提示詞",
+  "expectedImprovement": "預期改進什麼問題"
+}`;
+
+    try {
+      if (!this.router) return;
+      const res = await this.router.route(prompt, "");
+      if (res.success) {
+        let parsed;
+        try {
+          const s = res.response.replace(/```json\n?/g,'').replace(/```\s*$/g,'').trim();
+          const i = s.indexOf('{'), j = s.lastIndexOf('}');
+          parsed = JSON.parse(s.substring(i, j+1));
+        } catch { return; }
+
+        if (parsed?.newPrompt && parsed.newPrompt.includes("thinking") && parsed.newPrompt.includes("action")) {
+          await this.saveVersion(parsed.newPrompt, `針對性優化：${patterns.map(p => p.pattern).join(', ')}`);
+          this.logger.info(`✨ 針對性優化完成：${parsed.analysis}`);
+        }
+      }
+    } catch (e) {
+      this.logger.warn(`針對性優化失敗：${e.message}`);
     }
   }
 
